@@ -15,6 +15,7 @@ namespace MissionPlanner.Utilities
     /// </summary>
     public class DFLog
     {
+        internal readonly DFLogBuffer _dfLogBuffer;
         private static readonly ILog log = LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
         public struct Label
@@ -49,6 +50,22 @@ namespace MissionPlanner.Utilities
                 }
             }
 
+            public string instance
+            {
+                get
+                {
+                    var typeno = parent.logformat[msgtype].Id;
+
+                    if (!parent._dfLogBuffer.InstanceType.ContainsKey(typeno))
+                        return "";
+
+                    var unittypes = parent._dfLogBuffer.FMTU[typeno].Item1;
+
+                    int colinst = unittypes.IndexOf("#") + 1;
+                    return raw[colinst].ToString();
+                }
+            }
+
             string[] _items;
             public string[] items
             {
@@ -61,7 +78,7 @@ namespace MissionPlanner.Utilities
                             if (a.IsNumber())
                                 return (((IConvertible)a).ToString(CultureInfo.InvariantCulture));
                             else
-                                return a.ToString();
+                                return a?.ToString();
                         }).ToArray();
                     }
                     return _items;
@@ -86,7 +103,7 @@ namespace MissionPlanner.Utilities
                             _timems = int.Parse(raw[index].ToString());
                             return _timems;
                         }
-                        index = parent.FindMessageOffset(items[0], "TimeUS");
+                        index = parent.FindMessageOffset(msgtype, "TimeUS");
                         if (index >= 0)
                         {
                             _timems = (int)(long.Parse(raw[index].ToString()) / 1000);
@@ -105,7 +122,18 @@ namespace MissionPlanner.Utilities
             }
 
             public int lineno;
-            public object[] raw;
+            private object[] _raw;
+
+            public object[] raw
+            {
+                get { return _raw; }
+                set
+                {
+                    _raw = value;
+                    _items = null;
+                }
+            }
+
             public DFLog parent;
 
             public DFItem(DFLog _parent, object[] _answer, int lineno) : this()
@@ -418,6 +446,11 @@ namespace MissionPlanner.Utilities
 
         long msoffset = 0;
 
+        public DFLog(DFLogBuffer dfLogBuffer)
+        {
+            _dfLogBuffer = dfLogBuffer;
+        }
+
         public List<DFItem> ReadLog(Stream fn)
         {
             Clear();
@@ -648,7 +681,7 @@ namespace MissionPlanner.Utilities
             return -1;
         }
 
-        public long GetLineNoFromTime(CollectionBuffer logdata, DateTime p1)
+        public long GetLineNoFromTime(DFLogBuffer logdata, DateTime p1)
         {
             DateTime last = DateTime.MaxValue;
 

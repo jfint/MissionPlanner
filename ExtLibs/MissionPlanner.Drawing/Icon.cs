@@ -1,7 +1,7 @@
 using System;
 using System.IO;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public class Icon: Bitmap
     {
@@ -22,7 +22,7 @@ namespace MissionPlanner.Drawing
         {
             get
             {
-                return base.nativeSKImage.Handle; }
+                return base.nativeSkBitmap.Handle; }
         }
 
         public Bitmap ToBitmap()

@@ -59,10 +59,17 @@ public partial class MAVLink
                     if (_data != null)
                         return _data;
 
-                    _data = Activator.CreateInstance(MAVLINK_MESSAGE_INFOS.GetMessageInfo(msgid).type);
+                    var typeinfo = MAVLINK_MESSAGE_INFOS.GetMessageInfo(msgid);
+
+                    if (typeinfo.type == null)
+                        return null;
+
+                    _data = Activator.CreateInstance(typeinfo.type);
 
                     try
                     {
+                        if (payloadlength == 0)
+                            return _data;
                         // fill in the data of the object
                         if (ismavlink2)
                         {
@@ -152,6 +159,10 @@ public partial class MAVLink
 
             if (buffer[0] == MAVLINK_STX)
             {
+                if (buffer.Length < 10)
+                {
+                    return;
+                }
                 header = buffer[0];
                 payloadlength = buffer[1];
                 incompat_flags = buffer[2];
@@ -175,6 +186,10 @@ public partial class MAVLink
             }
             else
             {
+                if (buffer.Length < 6)
+                {
+                    return;
+                }
                 header = buffer[0];
                 payloadlength = buffer[1];
                 seq = buffer[2];

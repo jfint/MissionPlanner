@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Text;
 
 namespace MissionPlanner
 {
@@ -26,7 +27,8 @@ namespace MissionPlanner
         public static float multiplieralt = 1;
         public static string AltUnit = "";
 
-        private static PointLatLngAlt _homelocation = new PointLatLngAlt();
+        private PointLatLngAlt _homelocation = new PointLatLngAlt();
+        private static PointLatLngAlt _plannedhomelocation = new PointLatLngAlt();
 
         private static PointLatLngAlt _trackerloc = new PointLatLngAlt();
 
@@ -178,6 +180,8 @@ namespace MissionPlanner
             ratestatusbackup = 2;
             ratesensorsbackup = 2;
             ratercbackup = 2;
+            //Init dictionary for storing names for customfields
+            custom_field_names = new Dictionary<string, string>();
         }
 
         ~CurrentState()
@@ -201,6 +205,20 @@ namespace MissionPlanner
             var t = Type.GetType("Mono.Runtime");
             MONO = t != null;
         }
+
+        // propery name, Name   Name starts with MAV_ will link to named_value_float messages
+        public static Dictionary<string, string> custom_field_names;
+
+        public float customfield0 { get; set; }
+        public float customfield1 { get; set; }
+        public float customfield2 { get; set; }
+        public float customfield3 { get; set; }
+        public float customfield4 { get; set; }
+        public float customfield5 { get; set; }
+        public float customfield6 { get; set; }
+        public float customfield7 { get; set; }
+        public float customfield8 { get; set; }
+        public float customfield9 { get; set; }
 
         // orientation - rads
         [DisplayText("Roll (deg)")]
@@ -728,7 +746,7 @@ namespace MissionPlanner
             set => _verticalspeed = _verticalspeed * 0.4f + value * 0.6f;
         }
 
-        [DisplayText("Vertical Speed (fpm)")] public double verticalspeed_fpm => vz * -3.28084;
+        [DisplayText("Vertical Speed (fpm)")] public double verticalspeed_fpm => vz * -3.28084 * 60;
 
         [DisplayText("Glide Ratio")]
         public double glide_ratio
@@ -918,17 +936,20 @@ namespace MissionPlanner
         /// </summary>
         public string messageHigh
         {
-            get { return _messagehigh; }
+            get { if (DateTime.Now > _messageHighTime.AddSeconds(10)) return ""; return _messagehigh; }
             set
             {
-                messageHighTime = DateTime.Now;
+                // check against get
+                if (messageHigh == value)
+                    return;
+
+                _messageHighTime = DateTime.Now;
                 _messagehigh = value;
             }
         }
 
         string _messagehigh = "";
-
-        public DateTime messageHighTime { get; set; }
+        DateTime _messageHighTime;
 
         //battery
         [GroupText("Battery")]
@@ -1145,7 +1166,17 @@ namespace MissionPlanner
         public PointLatLngAlt HomeLocation
         {
             get => _homelocation;
-            set => _homelocation = value;
+            set
+            {
+                _homelocation = value;
+            }
+        }
+
+        [GroupText("Position")]
+        public PointLatLngAlt PlannedHomeLocation
+        {
+            get => _plannedhomelocation;
+            set => _plannedhomelocation = value;
         }
 
         [GroupText("Position")]
@@ -1177,7 +1208,7 @@ namespace MissionPlanner
         [GroupText("Position")] public PointLatLngAlt Location => new PointLatLngAlt(lat, lng, altasl);
         [GroupText("Position")] public PointLatLngAlt TargetLocation { get; set; } = PointLatLngAlt.Zero;
 
-        /*
+
         public float GeoFenceDist
         {
             get
@@ -1185,63 +1216,128 @@ namespace MissionPlanner
                 try
                 {
                     float disttotal = 99999;
-                    PointLatLngAlt lineStartLatLngAlt = null;
                     var R = 6371e3;
-                    // close loop
-                    var list = parent.parent.MAV.fencepoints.ToList();
-                    if (list.Count > 0)
-                    {
-                        // remove return location
-                        list.RemoveAt(0);
-                    }
 
-                    // check all segments
-                    foreach (var mavlinkFencePointT in list)
-                    {
-                        if (lineStartLatLngAlt == null)
+                    var list = parent.fencepoints
+                        .Where(a => a.Value.command != (ushort) MAVLink.MAV_CMD.FENCE_RETURN_POINT)
+                        .ChunkByField((a, b, count) =>
                         {
-                            lineStartLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.lat,
-                                mavlinkFencePointT.Value.lng);
-                            continue;
+                            // these fields types stand alone
+                            if (a.Value.command == (ushort) MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION ||
+                                a.Value.command == (ushort) MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION)
+                                return false;
+
+                            if (count >= b.Value.param1)
+                                return false;
+
+                            return a.Value.command == b.Value.command;
+                        });
+
+                    // check all sublists
+                    foreach (var sublist in list)
+                    {
+                        // process circles
+                        if (sublist.Count() == 1)
+                        {
+                            var item = sublist.First().Value;
+                            if (item.command == (ushort) MAVLink.MAV_CMD.FENCE_CIRCLE_EXCLUSION)
+                            {
+                                var lla = new PointLatLngAlt(item.x / 1e7,
+                                    item.y / 1e7);
+                                var dist = lla.GetDistance(Location);
+                                if (dist < item.param1)
+                                    return 0;
+                                disttotal = (float) Math.Min(dist - item.param1, disttotal);
+                            }
+                            else if (item.command == (ushort) MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION)
+                            {
+                                var lla = new PointLatLngAlt(item.x / 1e7,
+                                    item.y / 1e7);
+
+                                var dist = lla.GetDistance(Location);
+                                if (dist > item.param1)
+                                    return 0;
+                                disttotal = (float) Math.Min(item.param1 - dist, disttotal);
+                            }
                         }
 
-                        // crosstrack distance
-                        var lineEndLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.lat, mavlinkFencePointT.Value.lng);
+                        if (sublist == null || sublist.Count() < 3)
+                            continue;
 
-                        var lineDist = lineStartLatLngAlt.GetDistance2(lineEndLatLngAlt);
-
-                        var distToLocation = lineStartLatLngAlt.GetDistance2(Location);
-                        var bearToLocation = lineStartLatLngAlt.GetBearing(Location);
-                        var lineBear = lineStartLatLngAlt.GetBearing(lineEndLatLngAlt);
-
-                        var angle = bearToLocation - lineBear;
-                        if (angle < 0)
-                            angle += 360;
-
-                        var alongline = Math.Cos(angle * MathHelper.deg2rad) * distToLocation;
-
-                        // check to see if our point is still within the line length
-                        if (alongline > lineDist)
+                        if (PolygonTools.isInside(
+                            sublist.CloseLoop().Select(a => new PolygonTools.Point(a.Value.y / 1e7, a.Value.x / 1e7)).ToList(),
+                            new PolygonTools.Point(Location.Lng, Location.Lat)))
                         {
+                            if (sublist.First().Value.command ==
+                                (ushort) MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_EXCLUSION)
+                            {
+                                return 0;
+                            }
+                        }
+                        else
+                        {
+                            if (sublist.First().Value.command ==
+                                (ushort) MAVLink.MAV_CMD.FENCE_POLYGON_VERTEX_INCLUSION)
+                            {
+                                return 0;
+                            }
+                        }
+
+                        PointLatLngAlt lineStartLatLngAlt = null;
+                        // check all segments
+                        foreach (var mavlinkFencePointT in sublist.CloseLoop())
+                        {
+                            if (lineStartLatLngAlt == null)
+                            {
+                                lineStartLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                                    mavlinkFencePointT.Value.y / 1e7);
+                                continue;
+                            }
+
+                            // crosstrack distance
+                            var lineEndLatLngAlt = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                                mavlinkFencePointT.Value.y / 1e7);
+
+                            var lineDist = lineStartLatLngAlt.GetDistance2(lineEndLatLngAlt);
+
+                            var distToLocation = lineStartLatLngAlt.GetDistance2(Location);
+                            var bearToLocation = lineStartLatLngAlt.GetBearing(Location);
+                            var lineBear = lineStartLatLngAlt.GetBearing(lineEndLatLngAlt);
+
+                            var angle = bearToLocation - lineBear;
+                            if (angle < 0)
+                                angle += 360;
+
+                            var alongline = Math.Cos(angle * MathHelper.deg2rad) * distToLocation;
+
+                            // check to see if our point is still within the line length
+                            if (alongline < 0 || alongline > lineDist)
+                            {
+                                lineStartLatLngAlt = lineEndLatLngAlt;
+                                continue;
+                            }
+
+                            var dXt2 = Math.Sin(angle * MathHelper.deg2rad) * distToLocation;
+
+                            var dXt = Math.Asin(Math.Sin(distToLocation / R) * Math.Sin(angle * MathHelper.deg2rad)) *
+                                      R;
+
+                            disttotal = (float) Math.Min(disttotal, Math.Abs(dXt2));
+
                             lineStartLatLngAlt = lineEndLatLngAlt;
-                            continue;
                         }
-
-                        var dXt2 = Math.Sin(angle * MathHelper.deg2rad) * distToLocation;
-
-                        var dXt = Math.Asin(Math.Sin(distToLocation / R) * Math.Sin(angle * MathHelper.deg2rad)) * R;
-
-                        disttotal = (float)Math.Min(disttotal, Math.Abs(dXt2));
-
-                        lineStartLatLngAlt = lineEndLatLngAlt;
                     }
 
                     // check also distance from the points - because if we are outside the polygon, we may be on a corner segment
-                    foreach (var mavlinkFencePointT in list)
+                    foreach (var sublist in list)
+                    foreach (var mavlinkFencePointT in sublist)
                     {
-                        var pathpoint = new PointLatLngAlt(mavlinkFencePointT.Value.lat, mavlinkFencePointT.Value.lng);
+                        if (mavlinkFencePointT.Value.command == (ushort) MAVLink.MAV_CMD.FENCE_CIRCLE_INCLUSION)
+                            continue;
+                        var pathpoint = new PointLatLngAlt(mavlinkFencePointT.Value.x / 1e7,
+                            mavlinkFencePointT.Value.y / 1e7);
                         var dXt2 = pathpoint.GetDistance(Location);
-                        disttotal = (float)Math.Min(disttotal, Math.Abs(dXt2));
+                        disttotal = (float) Math.Min(disttotal, Math.Abs(dXt2));
                     }
 
                     return disttotal;
@@ -1252,7 +1348,7 @@ namespace MissionPlanner
                 }
             }
         }
-        */
+
         [GroupText("Position")]
         [DisplayText("Dist to Home (dist)")]
         public float DistToHome
@@ -1732,7 +1828,6 @@ namespace MissionPlanner
                         {
                             // fence breached
                             messageHigh = "Fence Breach";
-                            messageHighTime = DateTime.Now;
                         }
                     }
 
@@ -1775,7 +1870,8 @@ namespace MissionPlanner
                         lat = highlatency.latitude / 1e7;
                         lng = highlatency.longitude / 1e7;
                         altasl = highlatency.altitude_amsl;
-                        alt = highlatency.altitude_sp;
+                        alt = altasl - (float)HomeAlt;
+                        alt_error = highlatency.altitude_sp - alt;
                         airspeed = highlatency.airspeed;
                         targetairspeed = highlatency.airspeed_sp;
                         groundspeed = highlatency.groundspeed;
@@ -1912,34 +2008,29 @@ namespace MissionPlanner
                         if (ekfvelv >= 1)
                         {
                             messageHigh = Strings.ERROR + " " + Strings.velocity_variance;
-                            messageHighTime = DateTime.Now;
                         }
 
                         if (ekfcompv >= 1)
                         {
                             messageHigh = Strings.ERROR + " " + Strings.compass_variance;
-                            messageHighTime = DateTime.Now;
                         }
 
                         if (ekfposhor >= 1)
                         {
                             messageHigh = Strings.ERROR + " " + Strings.pos_horiz_variance;
-                            messageHighTime = DateTime.Now;
                         }
 
                         if (ekfposvert >= 1)
                         {
                             messageHigh = Strings.ERROR + " " + Strings.pos_vert_variance;
-                            messageHighTime = DateTime.Now;
                         }
 
                         if (ekfteralt >= 1)
                         {
                             messageHigh = Strings.ERROR + " " + Strings.terrain_alt_variance;
-                            messageHighTime = DateTime.Now;
                         }
 
-                        for (var a = 1; a <= (int) MAVLink.EKF_STATUS_FLAGS.EKF_PRED_POS_HORIZ_ABS; a = a << 1)
+                        for (var a = 1; a <= (int) MAVLink.EKF_STATUS_FLAGS.EKF_UNINITIALIZED; a = a << 1)
                         {
                             var currentbit = ekfstatusm.flags & a;
                             if (currentbit == 0)
@@ -1951,9 +2042,20 @@ namespace MissionPlanner
                                 switch (currentflag)
                                 {
                                     case MAVLink.EKF_STATUS_FLAGS.EKF_ATTITUDE: // step 1
+                                        ekfstatus = 1;
+                                        log.Info("EKF red has no EKF_ATTITUDE - " +
+                                                 (MAVLink.EKF_STATUS_FLAGS) ekfstatusm.flags);
+                                        break;
                                     case MAVLink.EKF_STATUS_FLAGS.EKF_VELOCITY_HORIZ: // with pos
-                                        if (gpsstatus > 0) // we have gps and dont have vel_hoz
+                                        if (gpsstatus > 0)
+                                        {
+                                            // we have gps and dont have vel_hoz
                                             ekfstatus = 1;
+                                            log.Info(
+                                                "EKF red has gps lock but no EKF_ATTITUDE and EKF_VELOCITY_HORIZ - " +
+                                                (MAVLink.EKF_STATUS_FLAGS) ekfstatusm.flags);
+                                        }
+
                                         break;
                                     case MAVLink.EKF_STATUS_FLAGS.EKF_VELOCITY_VERT: // with pos
                                     //case MAVLink.EKF_STATUS_FLAGS.EKF_POS_HORIZ_REL: // optical flow
@@ -1966,6 +2068,15 @@ namespace MissionPlanner
                                         //messageHigh = Strings.ERROR + " " + currentflag.ToString().Replace("_", " ");
                                         //messageHighTime = DateTime.Now;
                                         break;
+
+                                }
+                            }
+                            else
+                            {
+                                if (a == (int) MAVLink.EKF_STATUS_FLAGS.EKF_UNINITIALIZED)
+                                {
+                                    ekfstatus = 1;
+                                    log.Info("EKF red uninit " + (MAVLink.EKF_STATUS_FLAGS) ekfstatusm.flags);
                                 }
                             }
                         }
@@ -2045,7 +2156,6 @@ namespace MissionPlanner
                             if (armed && sensors_enabled.motor_control == false && sensors_enabled.seen)
                             {
                                 messageHigh = "(SAFE)";
-                                messageHighTime = DateTime.Now;
                             }
 
                             // for future use
@@ -2117,77 +2227,69 @@ namespace MissionPlanner
                         errors_count3 = sysstatus.errors_count3;
                         errors_count4 = sysstatus.errors_count4;
 
-                        if (errors_count1 > 0 || errors_count2 > 0)
-                        {
-                            messageHigh = "InternalError " + Enum.GetName(typeof(AP_InternalError.error_t),
-                                              (errors_count1 + (errors_count2 << 16)));
-                        }
-
                         sensors_enabled.Value = sysstatus.onboard_control_sensors_enabled;
                         sensors_health.Value = sysstatus.onboard_control_sensors_health;
                         sensors_present.Value = sysstatus.onboard_control_sensors_present;
 
                         terrainactive = sensors_health.terrain && sensors_enabled.terrain && sensors_present.terrain;
 
-                        if (!sensors_health.gps && sensors_enabled.gps && sensors_present.gps)
+                        if (errors_count1 > 0 || errors_count2 > 0)
+                        {
+                            messageHigh = "InternalError 0x" + (errors_count1 + (errors_count2 << 16)).ToString("X");
+                        } 
+                        
+                        if (!sensors_health.prearm && sensors_enabled.prearm && sensors_present.prearm)
+                        {
+                            messageHigh = Strings.Prearm_check_failed;
+                        }
+                        else if (!sensors_health.gps && sensors_enabled.gps && sensors_present.gps)
                         {
                             messageHigh = Strings.BadGPSHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.gyro && sensors_enabled.gyro && sensors_present.gyro)
                         {
                             messageHigh = Strings.BadGyroHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.accelerometer && sensors_enabled.accelerometer &&
                                  sensors_present.accelerometer)
                         {
                             messageHigh = Strings.BadAccelHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.compass && sensors_enabled.compass && sensors_present.compass)
                         {
                             messageHigh = Strings.BadCompassHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.barometer && sensors_enabled.barometer && sensors_present.barometer)
                         {
                             messageHigh = Strings.BadBaroHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.LASER_POSITION && sensors_enabled.LASER_POSITION &&
                                  sensors_present.LASER_POSITION)
                         {
                             messageHigh = Strings.BadLiDARHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.optical_flow && sensors_enabled.optical_flow &&
                                  sensors_present.optical_flow)
                         {
                             messageHigh = Strings.BadOptFlowHealth;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.VISION_POSITION && sensors_enabled.VISION_POSITION &&
                                  sensors_present.VISION_POSITION)
                         {
                             messageHigh = Strings.Bad_Vision_Position;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.terrain && sensors_enabled.terrain && sensors_present.terrain)
                         {
                             messageHigh = Strings.BadorNoTerrainData;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.geofence && sensors_enabled.geofence &&
                                  sensors_present.geofence)
                         {
                             messageHigh = Strings.GeofenceBreach;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.ahrs && sensors_enabled.ahrs && sensors_present.ahrs)
                         {
                             messageHigh = Strings.BadAHRS;
-                            messageHighTime = DateTime.Now;
                         }
                         else if (!sensors_health.rc_receiver && sensors_enabled.rc_receiver &&
                                  sensors_present.rc_receiver)
@@ -2198,13 +2300,19 @@ namespace MissionPlanner
                             if (reporterror)
                             {
                                 messageHigh = Strings.NORCReceiver;
-                                messageHighTime = DateTime.Now;
                             }
                         }
-                        else if (!sensors_health.logging && sensors_enabled.logging && sensors_present.logging)
+                        else if (!sensors_health.battery && sensors_enabled.battery && sensors_present.battery)
                         {
-                            messageHigh = Strings.BadLogging;
-                            messageHighTime = DateTime.Now;
+                            messageHigh = Strings.Bad_Battery;
+                        }
+                        else if (!sensors_health.proximity && sensors_enabled.proximity && sensors_present.proximity)
+                        {
+                            messageHigh = Strings.Bad_Proximity;
+                        }
+                        else if (!sensors_health.satcom && sensors_enabled.satcom && sensors_present.satcom)
+                        {
+                            messageHigh = Strings.Bad_SatCom;
                         }
                     }
 
@@ -2854,6 +2962,81 @@ namespace MissionPlanner
                         SSA = aoa_ssa.SSA;
                     }
                         break;
+
+                    case (uint)MAVLink.MAVLINK_MSG_ID.NAMED_VALUE_FLOAT:
+
+                        {
+                            var named_float = mavLinkMessage.ToStructure<MAVLink.mavlink_named_value_float_t>();
+
+                            string mav_value_name = Encoding.ASCII.GetString(named_float.name);
+
+                            int ind = mav_value_name.IndexOf('\0');
+                            if (ind != -1)
+                                mav_value_name = mav_value_name.Substring(0, ind);
+
+                            string name = "MAV_" + mav_value_name.ToUpper();
+
+                            float value = named_float.value;
+                            var field = custom_field_names.FirstOrDefault(x => x.Value == name).Key;
+                        
+                            //todo: if field is null then check if we have a free customfield and add the named_value 
+                            if (field == null)
+                            {
+                                short i;
+                                for (i = 0; i < 10; i++)
+                                {
+                                    if (!custom_field_names.ContainsKey("customfield" + i.ToString())) break;
+                                }
+                                if (i < 10)
+                                {
+                                    field = "customfield" + i.ToString();
+                                    custom_field_names.Add(field, name);
+                                }
+                            }
+                        
+
+                            if (field != null)
+                            {
+                                switch(field)
+                                {
+                                    case "customfield0":
+                                        customfield0 = value;
+                                        break;
+                                    case "customfield1":
+                                        customfield1 = value;
+                                        break;
+                                    case "customfield2":
+                                        customfield2 = value;
+                                        break;
+                                    case "customfield3":
+                                        customfield3 = value;
+                                        break;
+                                    case "customfield4":
+                                        customfield4 = value;
+                                        break;
+                                    case "customfield5":
+                                        customfield5 = value;
+                                        break;
+                                    case "customfield6":
+                                        customfield6 = value;
+                                        break;
+                                    case "customfield7":
+                                        customfield7 = value;
+                                        break;
+                                    case "customfield8":
+                                        customfield8 = value;
+                                        break;
+                                    case "customfield9":
+                                        customfield9 = value;
+                                        break;
+                                    default:
+                                        break;
+                                }
+
+                            }
+
+                    }
+                        break;
                 }
             }
         }
@@ -2904,7 +3087,7 @@ namespace MissionPlanner
             }
         }
 
-        public List<string> GetItemList(bool alpha = false)
+        public List<string> GetItemList(bool alpha = false, bool numbersonly = false)
         {
             var ans = new List<string>();
 
@@ -2915,8 +3098,14 @@ namespace MissionPlanner
             var props = test.GetProperties();
 
             //props
-
-            foreach (var field in props) ans.Add(field.Name);
+            foreach (var field in props)
+            {
+                if(numbersonly)
+                    if (!field.PropertyType.IsNumber())
+                        continue;
+                
+                ans.Add(field.Name);
+            }
 
             if (alpha)
                 ans.Sort();
@@ -2927,6 +3116,12 @@ namespace MissionPlanner
         public string GetNameandUnit(string name)
         {
             var desc = name;
+
+            if (custom_field_names.ContainsKey(name))
+            {
+                desc = custom_field_names[name];
+                return desc;
+            }
             try
             {
                 var typeofthing = typeof(CurrentState).GetProperty(name);
@@ -3309,6 +3504,33 @@ namespace MissionPlanner
                 set =>
                     bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.MAV_SYS_STATUS_LOGGING)] =
                         value;
+            }
+
+            public bool battery
+            {
+                get => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.BATTERY)];
+                set => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.BATTERY)] = value;
+            }
+
+            public bool proximity
+            {
+                get => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.PROXIMITY)];
+                set => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.PROXIMITY)] = value;
+            }
+
+            public bool satcom
+            {
+                get => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.SATCOM)];
+                set => bitArray[ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.SATCOM)] = value;
+            }
+
+            public bool prearm
+            {
+                get => bitArray[
+                    ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.MAV_SYS_STATUS_PREARM_CHECK)];
+                set => bitArray[
+                        ConvertValuetoBitmaskOffset((int) MAVLink.MAV_SYS_STATUS_SENSOR.MAV_SYS_STATUS_PREARM_CHECK)] =
+                    value;
             }
 
             public uint Value

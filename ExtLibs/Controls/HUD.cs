@@ -627,9 +627,6 @@ namespace MissionPlanner.Controls
         public string message { get; set; }
 
         [System.ComponentModel.Browsable(true), System.ComponentModel.Category("Values")]
-        public DateTime messagetime { get; set; }
-
-        [System.ComponentModel.Browsable(true), System.ComponentModel.Category("Values")]
         public float vibex { get; set; }
 
         [System.ComponentModel.Browsable(true), System.ComponentModel.Category("Values")]
@@ -2442,12 +2439,14 @@ namespace MissionPlanner.Controls
                     graphicsObject.DrawLine(this._greenPen, scrollbg.Left - 5,
                         scrollbg.Top - (int) (fontsize * 2.2) - 2 - 20, scrollbg.Left - 5,
                         scrollbg.Top - (int) (fontsize) - 2 - 20);
-                    graphicsObject.DrawLine(this._greenPen, scrollbg.Left - 10,
-                        scrollbg.Top - (int) (fontsize * 2.2) - 2 - 15, scrollbg.Left - 10,
-                        scrollbg.Top - (int) (fontsize) - 2 - 20);
-                    graphicsObject.DrawLine(this._greenPen, scrollbg.Left - 15,
-                        scrollbg.Top - (int) (fontsize * 2.2) - 2 - 10, scrollbg.Left - 15,
-                        scrollbg.Top - (int) (fontsize) - 2 - 20);
+                    if (_linkqualitygcs > 50)
+                        graphicsObject.DrawLine(this._greenPen, scrollbg.Left - 10,
+                            scrollbg.Top - (int) (fontsize * 2.2) - 2 - 15, scrollbg.Left - 10,
+                            scrollbg.Top - (int) (fontsize) - 2 - 20);
+                    if (_linkqualitygcs > 80)
+                        graphicsObject.DrawLine(this._greenPen, scrollbg.Left - 15,
+                            scrollbg.Top - (int) (fontsize * 2.2) - 2 - 10, scrollbg.Left - 15,
+                            scrollbg.Top - (int) (fontsize) - 2 - 20);
 
                     drawstring(_linkqualitygcs.ToString("0") + "%", font, fontsize, _whiteBrush,
                         scrollbg.Left, scrollbg.Top - (int) (fontsize * 2.2) - 2 - 20);
@@ -2671,7 +2670,7 @@ namespace MissionPlanner.Controls
                     statuslast = status;
                 }
 
-                if (message != "" && messagetime.AddSeconds(10) > DateTime.Now)
+                if (message != "")
                 {
                     var newfontsize = calcsize(message, font, fontsize + 10, (SolidBrush) Brushes.Red, Width - 50 - 50);
 
@@ -2786,6 +2785,10 @@ namespace MissionPlanner.Controls
             return bmp;
         }
 
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
+        }
 
         float wrap360(float noin)
         {

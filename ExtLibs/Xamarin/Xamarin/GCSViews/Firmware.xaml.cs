@@ -17,6 +17,7 @@ using MissionPlanner.test;
 using px4uploader;
 using Xamarin.Forms;
 using Xamarin.Forms.Xaml;
+using Acr.UserDialogs;
 
 namespace Xamarin.GCSViews
 {
@@ -109,7 +110,7 @@ namespace Xamarin.GCSViews
         private long? detectedboardid;
         private async Task LookForPort(APFirmware.MAV_TYPE mavtype)
         {
-            var ports = await Test.TestMethod.GetDeviceInfoList().ConfigureAwait(false);
+            var ports = await Test.UsbDevices.GetDeviceInfoList().ConfigureAwait(false);
 
             foreach (var deviceInfo in ports)
             {
@@ -133,6 +134,8 @@ namespace Xamarin.GCSViews
                     if (fwitems?.Count == 1)
                     {
                         baseurl = fwitems[0].Url.ToString();
+
+                        await DownloadAndUpload(baseurl).ConfigureAwait(false);
                     }
                     else if (fwitems?.Count > 0)
                     {
@@ -282,6 +285,8 @@ namespace Xamarin.GCSViews
         {
             log.Info(status);
 
+            UserDialogs.Instance.Toast(status, TimeSpan.FromSeconds(3));
+
             if (Progress != null)
             {
                 Progress(percent, status);
@@ -317,13 +322,13 @@ namespace Xamarin.GCSViews
             while (DateTime.Now < DEADLINE)
             {
                 //string[] allports = SerialPort.GetPortNames();
-                var di = await Test.TestMethod.GetDeviceInfoList().ConfigureAwait(false);
+                var di = await Test.UsbDevices.GetDeviceInfoList().ConfigureAwait(false);
 
                 foreach (var port in di)
                 {
                     log.Info(DateTime.Now.Millisecond + " Trying Port " + port);
 
-                    var portUsb = await Test.TestMethod.GetUSB(port).ConfigureAwait(false);
+                    var portUsb = await Test.UsbDevices.GetUSB(port).ConfigureAwait(false);
 
                     if(portUsb == null)
                         continue;
@@ -344,8 +349,8 @@ namespace Xamarin.GCSViews
                     {
                         up.identify();
                         updateProgress(-1, "Identify");
-                        log.InfoFormat("Found board type {0} boardrev {1} bl rev {2} fwmax {3} on {4}", up.board_type,
-                            up.board_rev, up.bl_rev, up.fw_maxsize, port);
+                        log.InfoFormat("Found board type {0} brdrev {1} blrev {2} fwmax {3} chip {5:X} chipdes {6} on {4}", up.board_type,
+                        up.board_rev, up.bl_rev, up.fw_maxsize, port, up.chip, up.chip_desc);
 
                         up.ProgressEvent += new Uploader.ProgressEventHandler(up_ProgressEvent);
                         up.LogEvent += new Uploader.LogEventHandler(up_LogEvent);
@@ -422,13 +427,13 @@ namespace Xamarin.GCSViews
             List<Task<bool>> tasklist = new List<Task<bool>>();
 
             //string[] allports = SerialPort.GetPortNames();
-            var di = await Test.TestMethod.GetDeviceInfoList().ConfigureAwait(false);
+            var di = await Test.UsbDevices.GetDeviceInfoList().ConfigureAwait(false);
 
             foreach (var port in di)
             {
                 log.Info(DateTime.Now.Millisecond + " Trying Port " + port);
 
-                var portUsb = await Test.TestMethod.GetUSB(port).ConfigureAwait(false);
+                var portUsb = await Test.UsbDevices.GetUSB(port).ConfigureAwait(false);
 
                 if (portUsb == null)
                     continue;
@@ -480,7 +485,7 @@ namespace Xamarin.GCSViews
                     updateProgress(-1, "Look for HeartBeat");
 
                     MainV2.comPort.BaseStream =
-                        await Test.TestMethod.GetUSB((await Test.TestMethod.GetDeviceInfoList().ConfigureAwait(false)).First()).ConfigureAwait(false);
+                        await Test.UsbDevices.GetUSB((await Test.UsbDevices.GetDeviceInfoList().ConfigureAwait(false)).First()).ConfigureAwait(false);
 
                     var task = Task.Run(() =>
                     {
@@ -522,9 +527,9 @@ namespace Xamarin.GCSViews
         {
             Task.Run(async () =>
             {
-                Parallel.ForEach(await Test.TestMethod.GetDeviceInfoList(), async (port)=>
+                Parallel.ForEach(await Test.UsbDevices.GetDeviceInfoList(), async (port)=>
                 {
-                    var portUsb = await Test.TestMethod.GetUSB(port).ConfigureAwait(false);
+                    var portUsb = await Test.UsbDevices.GetUSB(port).ConfigureAwait(false);
 
                     if (portUsb == null)
                         return;
@@ -545,9 +550,8 @@ namespace Xamarin.GCSViews
                     try
                     {
                         up.identify();
-                        var msg = String.Format("Found board type {0} boardrev {1} bl rev {2} fwmax {3} on {4}",
-                            up.board_type,
-                            up.board_rev, up.bl_rev, up.fw_maxsize, port);
+                        var msg = String.Format("Found board type {0} brdrev {1} blrev {2} fwmax {3} chip {5:X} chipdes {6} on {4}", up.board_type,
+                        up.board_rev, up.bl_rev, up.fw_maxsize, port, up.chip, up.chip_desc);
                         log.Info(msg);
 
                         up.close();
@@ -580,12 +584,12 @@ namespace Xamarin.GCSViews
 
         public void Activate()
         {
-            Test.TestMethod.USBEvent += DeviceAttached;
+            Test.UsbDevices.USBEvent += DeviceAttached;
         }
 
         public void Deactivate()
         {
-            Test.TestMethod.USBEvent -= DeviceAttached;
+            Test.UsbDevices.USBEvent -= DeviceAttached;
         }
     }
 }

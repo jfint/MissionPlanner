@@ -1,14 +1,8 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
-using System.Data;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using MissionPlanner.Controls;
+﻿using MissionPlanner.Controls;
 using MissionPlanner.Utilities;
+using System;
+using System.Linq;
+using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews.ConfigurationView
 {
@@ -56,8 +50,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             {
                 var opts = Options.Aggregate((a, b) => a + "\r\n" + b);
                 InputBox.Show("Params", "Enter Param Names", ref opts, false, true);
-                Options = opts.Split(new[] {',','\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
+                Options = opts.Split(new[] { ',', '\n', '\r' }, StringSplitOptions.RemoveEmptyEntries);
                 Settings.Instance["UserParams"] = Options.Aggregate((a, b) => a.Trim() + "," + b.Trim());
+                Activate();
             };
             tableLayoutPanel1.RowCount++;
             tableLayoutPanel1.Controls.Add(button);
@@ -65,10 +60,10 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
             foreach (var option in Options)
             {
-                if (MainV2.comPort.MAV.param.ContainsKey(option))
+                if (!MainV2.comPort.MAV.param.ContainsKey(option))
                     continue;
                 tableLayoutPanel1.RowCount++;
-                tableLayoutPanel1.Controls.Add(new Label() {Text = option, Name = option});
+                tableLayoutPanel1.Controls.Add(new Label() { Text = option, Name = option });
                 var cmb = new MavlinkComboBox();
                 cmb.setup(
                     ParameterMetaDataRepository.GetParameterOptionsInt(option,
@@ -86,7 +81,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
         public void Deactivate()
         {
-            
+
         }
     }
 }

@@ -1,4 +1,5 @@
-﻿using System;
+﻿using MissionPlanner.Utilities;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -64,7 +65,21 @@ namespace MissionPlanner.Controls
             Label label = new Label();
             TextBox textBox = new TextBox();
             if (password)
+            {
                 textBox.UseSystemPasswordChar = true;
+            }            
+            else 
+            {
+                if (title != "")
+                {
+                    var oldlist = Settings.Instance.GetList("InputBox" + title.CleanString() + promptText.CleanString()).ToArray();
+                    textBox.AutoCompleteMode = AutoCompleteMode.SuggestAppend;
+                    textBox.AutoCompleteSource = AutoCompleteSource.CustomSource;
+                    textBox.AutoCompleteCustomSource = new AutoCompleteStringCollection();
+                    textBox.AutoCompleteCustomSource.AddRange(oldlist);
+                }
+            }
+
             if (multiline)
             {
                 textBox.Multiline = true;
@@ -152,8 +167,6 @@ namespace MissionPlanner.Controls
 
             Console.WriteLine("Input Box " + System.Threading.Thread.CurrentThread.Name);
 
-            Application.DoEvents();
-
             form.ShowDialog();
 
             Console.WriteLine("Input Box 2 " + System.Threading.Thread.CurrentThread.Name);
@@ -162,6 +175,11 @@ namespace MissionPlanner.Controls
 
             if (dialogResult == DialogResult.OK)
             {
+                if (textBox.AutoCompleteCustomSource != null)
+                {
+                    textBox.AutoCompleteCustomSource.Add(textBox.Text);
+                    Settings.Instance.SetList("InputBox" + title.CleanString() + promptText.CleanString(), textBox.AutoCompleteCustomSource.OfType<string>());
+                }
                 value = textBox.Text;
                 InputBox.value = value;
             }

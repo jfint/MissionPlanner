@@ -1,24 +1,4 @@
-﻿using System;
-using System.Collections;
-using System.Collections.Generic;
-using System.Configuration;
-using System.Data;
-using System.Drawing;
-using System.Drawing.Imaging;
-using System.Globalization;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Net.Sockets;
-using System.Reflection;
-using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using System.Xml;
-using System.Xml.Serialization;
-using DotSpatial.Data;
+﻿using DotSpatial.Data;
 using DotSpatial.Projections;
 using DotSpatial.Symbology;
 using GMap.NET;
@@ -38,7 +18,29 @@ using MissionPlanner.Swarm;
 using MissionPlanner.Utilities;
 using MissionPlanner.Warnings;
 using resedit;
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using System.Configuration;
+using System.Data;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Globalization;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Reflection;
+using System.Text;
+using System.Text.RegularExpressions;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
+using System.Xml;
+using System.Xml.Serialization;
+using MissionPlanner.ArduPilot.Mavlink;
 using static MissionPlanner.Utilities.Firmware;
+using Formatting = Newtonsoft.Json.Formatting;
 using ILog = log4net.ILog;
 
 namespace MissionPlanner
@@ -133,7 +135,7 @@ namespace MissionPlanner
 
                     Application.DoEvents();
 
-                    GMaps.Instance.PrimaryCache.PutImageToCache(tile.ToArray(), Custom.Instance.DbId, pnt,
+                    GMaps.Instance.PrimaryCache.PutImageToCache(tile.GetBuffer(), Custom.Instance.DbId, pnt,
                         int.Parse(mat.Groups[1].Value));
 
                     // Application.DoEvents();
@@ -264,7 +266,7 @@ namespace MissionPlanner
 
             using (var xmlwriter = XmlWriter.Create(basedir + Path.DirectorySeparatorChar + @"firmware2.xml", settings))
             {
-                for (int a=0; a < options.softwares.Count; a++)
+                for (int a = 0; a < options.softwares.Count; a++)
                 {
                     Loading.ShowLoading(((a - 1) / (float)list.Count) * 100.0 + "% " + options.softwares[a].name, this);
 
@@ -404,9 +406,9 @@ namespace MissionPlanner
             }
         }
 
-        private void BUT_magfit2_Click(object sender, EventArgs e)
+        private async void BUT_magfit2_Click(object sender, EventArgs e)
         {
-            MagCalib.ProcessLog(0);
+            await MagCalib.ProcessLog(0).ConfigureAwait(false);
         }
 
         private void BUT_shptopoly_Click(object sender, EventArgs e)
@@ -553,7 +555,7 @@ namespace MissionPlanner
             start = DateTime.Now;
             for (a = 0; a < 1000000; a++)
             {
-                //var ans2 = MavlinkUtil.ReadUsingPointer<MAVLink.mavlink_heartbeat_t>(array, 6);
+                var ans2 = MavlinkUtil.ReadUsingPointer<MAVLink.mavlink_heartbeat_t>(array, 6);
             }
             end = DateTime.Now;
             Console.WriteLine("ReadUsingPointer " + (end - start).TotalMilliseconds);
@@ -580,7 +582,7 @@ namespace MissionPlanner
 
                     Thread.Sleep(300);
 
-                    MainV2.comPort.doCommand(MAVLink.MAV_CMD.TAKEOFF, 0, 0, 0, 0, 0, 0, 10);
+                    MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.TAKEOFF, 0, 0, 0, 0, 0, 0, 10);
                 }
             }
             catch (Exception ex)
@@ -598,7 +600,7 @@ namespace MissionPlanner
 
                 MainV2.Comports.Add(mav);
             };
-            
+
             StreamCombiner.Start();
         }
 
@@ -617,7 +619,7 @@ namespace MissionPlanner
 
         private void but_reboot_Click(object sender, EventArgs e)
         {
-            if (CustomMessageBox.Show("Are you sure?","",MessageBoxButtons.YesNo) == (int)DialogResult.Yes)
+            if (CustomMessageBox.Show("Are you sure?", "", MessageBoxButtons.YesNo) == (int)DialogResult.Yes)
                 MainV2.comPort.doReboot(false, true);
         }
 
@@ -630,7 +632,7 @@ namespace MissionPlanner
             {
                 var newQNH = double.Parse(currentQNH);
 
-                MainV2.comPort.setParam("GND_ABS_PRESS", newQNH);
+                MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, "GND_ABS_PRESS", newQNH);
             }
         }
 
@@ -658,7 +660,7 @@ namespace MissionPlanner
             }
         }
 
-    
+
 
         private void but_agemapdata_Click(object sender, EventArgs e)
         {
@@ -815,7 +817,7 @@ namespace MissionPlanner
             frm.Show();
         }
 
-        private void but_gpsinj_Click(object sender, EventArgs e)
+        private async void but_gpsinj_Click(object sender, EventArgs e)
         {
             OpenFileDialog ofd = new OpenFileDialog();
             ofd.Filter = "tlog|*.tlog";
@@ -835,7 +837,7 @@ namespace MissionPlanner
 
                         while (mine.logplaybackfile.BaseStream.Position < mine.logplaybackfile.BaseStream.Length)
                         {
-                            MAVLink.MAVLinkMessage packet = mine.readPacket();
+                            MAVLink.MAVLinkMessage packet = await mine.readPacketAsync().ConfigureAwait(true);
 
                             if (packet.msgid == (uint)MAVLink.MAVLINK_MSG_ID.GPS_INJECT_DATA)
                             {
@@ -882,11 +884,14 @@ namespace MissionPlanner
         private void but_GDAL_Click(object sender, EventArgs e)
         {
             FolderBrowserDialog fbd = new FolderBrowserDialog();
+            if (Directory.Exists(Settings.Instance["GDALImageDir"]))
+                fbd.SelectedPath = Settings.Instance["GDALImageDir"];
 
             if (fbd.ShowDialog() == DialogResult.OK)
             {
                 if (Directory.Exists(fbd.SelectedPath))
                 {
+                    Settings.Instance["GDALImageDir"] = fbd.SelectedPath;
                     GDAL.GDAL.OnProgress += GDAL_OnProgress;
                     GDAL.GDAL.ScanDirectory(fbd.SelectedPath);
                     DTED.OnProgress += GDAL_OnProgress;
@@ -899,12 +904,16 @@ namespace MissionPlanner
 
         private void GDAL_OnProgress(double percent, string message)
         {
-            Loading.ShowLoading((percent).ToString("0.0%") + " " +message, this);
+            Loading.ShowLoading((percent).ToString("0.0%") + " " + message, this);
         }
 
         private void but_sortlogs_Click(object sender, EventArgs e)
         {
             MissionPlanner.Log.LogSort.SortLogs(Directory.GetFiles(Settings.Instance.LogDir, "*.tlog",
+                SearchOption.AllDirectories), Settings.Instance.LogDir);
+            MissionPlanner.Log.LogSort.SortLogs(Directory.GetFiles(Settings.Instance.LogDir, "*.bin",
+                SearchOption.AllDirectories), Settings.Instance.LogDir);
+            MissionPlanner.Log.LogSort.SortLogs(Directory.GetFiles(Settings.Instance.LogDir, "*.log",
                 SearchOption.AllDirectories), Settings.Instance.LogDir);
         }
 
@@ -916,12 +925,23 @@ namespace MissionPlanner
 
         private void but_td_Click(object sender, EventArgs e)
         {
-           
+            string path = "@SYS/threads.txt";
+            if (InputBox.Show("path", "path", ref path) == DialogResult.OK)
+            {
+                if (MainV2.comPort.BaseStream.IsOpen)
+                {
+                    var mavftp = new MAVFtp(MainV2.comPort, (byte) MainV2.comPort.sysidcurrent,
+                        (byte) MainV2.comPort.compidcurrent);
+                    var st = mavftp.GetFile(path, new CancellationTokenSource(5000), true);
+                    var output = Path.Combine(Settings.GetUserDataDirectory(), Path.GetFileName(path));
+                    File.WriteAllBytes(output, st.GetBuffer());
+                }
+            }
         }
 
         private void but_dem_Click(object sender, EventArgs e)
         {
-            UserControl ctl = new UserControl() {Width = 1100, AutoSize = true};
+            UserControl ctl = new UserControl() { Width = 1100, AutoSize = true };
 
             string line = "";
 
@@ -933,8 +953,8 @@ namespace MissionPlanner
                     item.xscale, item.yscale, item.zscale);
             }
 
-            ctl.Controls.Add(new Label() {Text = line, AutoSize = true, Location = new Point(0, 30)});
-            var butt = new MyButton() {Text = "Open DEM Dir"};
+            ctl.Controls.Add(new Label() { Text = line, AutoSize = true, Location = new Point(0, 30) });
+            var butt = new MyButton() { Text = "Open DEM Dir" };
             butt.Click += (a, ev) =>
             {
                 System.Diagnostics.Process.Start(@"C:\ProgramData\Mission Planner\srtm\");
@@ -965,10 +985,10 @@ namespace MissionPlanner
 
             if (ofd.CheckFileExists)
             {
-                string options = "GPS;ATT;NTUN;CTUN;MODE;CURR";
-                InputBox.Show("", "Enter Messages you want eg PARM;NTUN;CTUN", ref options);
+                string options = "GPS;ATT;NTUN;CTUN;MODE;BAT";
+                InputBox.Show("DashWare Types", "Enter Messages you want eg PARM;NTUN;CTUN", ref options);
 
-                var split = options.Split(new[] {';'}, StringSplitOptions.RemoveEmptyEntries);
+                var split = options.Split(new[] { ';' }, StringSplitOptions.RemoveEmptyEntries);
 
                 DashWare.Create(ofd.FileName, ofd.FileName + ".csv", split.Length > 0 ? split.ToList() : null);
             }
@@ -989,8 +1009,8 @@ namespace MissionPlanner
             if (CustomMessageBox.Show("Are you sure you want to upgrade the bootloader? This can brick your board",
                     "BL Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == (int)DialogResult.Yes)
                 if (CustomMessageBox.Show("Are you sure you want to upgrade the bootloader? This can brick your board, Please allow 5 mins for this process",
-                        "BL Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == (int) DialogResult.Yes)
-                    if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.FLASH_BOOTLOADER, 0, 0, 0, 0, 290876, 0, 0))
+                        "BL Update", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == (int)DialogResult.Yes)
+                    if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.FLASH_BOOTLOADER, 0, 0, 0, 0, 290876, 0, 0))
                     {
                         CustomMessageBox.Show("Upgraded bootloader");
                     }
@@ -1003,8 +1023,7 @@ namespace MissionPlanner
         private void but_3dmap_Click(object sender, EventArgs e)
         {
             var ogl = new OpenGLtest2();
-
-            ogl.ShowUserControl();
+            var frm = ogl.ShowUserControl();
         }
 
         private void but_anonlog_Click(object sender, EventArgs e)
@@ -1050,8 +1069,8 @@ namespace MissionPlanner
             {
                 var rate = int.Parse(cmbrate.Text.ToString());
                 var value = Enum.Parse(typeof(MAVLink.MAVLINK_MSG_ID), cmb.Text.ToString());
-                MainV2.comPort.doCommand(MAVLink.MAV_CMD.SET_MESSAGE_INTERVAL, (float) (int) value,
-                    1 / (float) rate * 1000000.0f, 0, 0, 0, 0, 0);
+                MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.SET_MESSAGE_INTERVAL, (float)(int)value,
+                    1 / (float)rate * 1000000.0f, 0, 0, 0, 0, 0);
             };
 
             Button but2 = new Button();
@@ -1059,12 +1078,12 @@ namespace MissionPlanner
             but2.Click += (o, args) =>
             {
                 var rate = int.Parse(cmbrate.Text.ToString());
-                ((IList) cmb.DataSource).ForEach(a =>
-                {
-                    var value = Enum.Parse(typeof(MAVLink.MAVLINK_MSG_ID), a.ToString());
-                    MainV2.comPort.doCommand(MAVLink.MAV_CMD.SET_MESSAGE_INTERVAL, (float) (int) value,
-                        1 / (float) rate * 1000000.0f, 0, 0, 0, 0, 0, false);
-                });
+                ((IList)cmb.DataSource).ForEach(a =>
+               {
+                   var value = Enum.Parse(typeof(MAVLink.MAVLINK_MSG_ID), a.ToString());
+                   MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.SET_MESSAGE_INTERVAL, (float)(int)value,
+                       1 / (float)rate * 1000000.0f, 0, 0, 0, 0, 0, false);
+               });
             };
 
             //cmb.SelectedIndexChanged += (o, args) => { MAVLink.MAVLINK_MSG_ID.GET_MESSAGE_INTERVAL };
@@ -1087,9 +1106,9 @@ namespace MissionPlanner
 
         private void but_disablearmswitch_Click(object sender, EventArgs e)
         {
-            if (CustomMessageBox.Show("Are you sure?", "", MessageBoxButtons.YesNo) == (int) DialogResult.Yes)
+            if (CustomMessageBox.Show("Are you sure?", "", MessageBoxButtons.YesNo) == (int)DialogResult.Yes)
                 MainV2.comPort.setMode(
-                    new MAVLink.mavlink_set_mode_t() {custom_mode = MainV2.comPort.MAV.cs.armed ? 0u : 1u},
+                    new MAVLink.mavlink_set_mode_t() { custom_mode = MainV2.comPort.MAV.cs.armed ? 0u : 1u },
                     MAVLink.MAV_MODE_FLAG.SAFETY_ARMED);
         }
 
@@ -1098,12 +1117,12 @@ namespace MissionPlanner
             string value = "0";
             if (InputBox.Show("hwid", "Enter the ID number", ref value, false, true) == DialogResult.OK)
             {
-                StringBuilder sb = new StringBuilder(); 
-                var items = value.Split(new char[] { '\r', '\n'}, StringSplitOptions.RemoveEmptyEntries);
+                StringBuilder sb = new StringBuilder();
+                var items = value.Split(new char[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries);
 
                 foreach (var item in items)
                 {
-                    var items2 = item.Split(new char[] {' ', '\t'});
+                    var items2 = item.Split(new char[] { ' ', '\t' });
 
                     foreach (var item2 in items2)
                     {
@@ -1113,8 +1132,8 @@ namespace MissionPlanner
                         {
                             Device.DeviceStructure test1 = new Device.DeviceStructure(uintvalue);
 
-                            sb.AppendLine(item.Replace('\t',' ') + " = " + test1.ToString());
-                           
+                            sb.AppendLine(item.Replace('\t', ' ') + " = " + test1.ToString());
+
                         }
                     }
                 }
@@ -1128,7 +1147,7 @@ namespace MissionPlanner
             string input = "";
             InputBox.Show("input", "enter the hex byte data", ref input, false, true);
 
-            var split = input.Replace("0x", ",").Split(new char[] {',', ' '}, StringSplitOptions.RemoveEmptyEntries);
+            var split = input.Replace("0x", ",").Split(new char[] { ',', ' ' }, StringSplitOptions.RemoveEmptyEntries);
 
             var buffer = split.Select(a => Convert.ToByte(a, 16));
 
@@ -1137,7 +1156,7 @@ namespace MissionPlanner
             var packet = parse.ReadPacket(new MemoryStream(buffer.ToArray()));
 
             CustomMessageBox.Show(packet?.ToString() +
-                                  "\n" + packet.ToJSON().WrapText(5, new[] {','}));
+                                  "\n" + packet.ToJSON().WrapText(5, new[] { ',' }));
         }
 
         private void but_acbarohight_Click(object sender, EventArgs e)
@@ -1149,12 +1168,12 @@ namespace MissionPlanner
             NumericUpDown mavlinkNumericUpDown = new NumericUpDown();
             mavlinkNumericUpDown.Minimum = -100;
             mavlinkNumericUpDown.Maximum = 100;
-         
+
             mavlinkNumericUpDown.Padding = new Padding(20);
-        mavlinkNumericUpDown.ValueChanged += (o, args) =>
-            {
-                MainV2.comPort.setParam("GND_ABS_PRESS", (float)(double.Parse(currentQNH) + (double)mavlinkNumericUpDown.Value * 11.1));
-            };
+            mavlinkNumericUpDown.ValueChanged += (o, args) =>
+                {
+                    MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, "GND_ABS_PRESS", (float)(double.Parse(currentQNH) + (double)mavlinkNumericUpDown.Value * 11.1));
+                };
 
             mavlinkNumericUpDown.ShowUserControl();
         }
@@ -1172,10 +1191,10 @@ namespace MissionPlanner
             //MAVLink.mavlink_mission_request_int_t req = new MAVLink.mavlink_mission_request_int_t();
 
             var frame = (byte)MAVLink.MAV_FRAME.GLOBAL_INT;
-            list.Add(new Locationwp() {alt = 0, frame = frame, id = (ushort) cmd, p1 = 4, lat = tl.Lat, lng = tl.Lng});
-            list.Add(new Locationwp() {alt = 0, frame = frame, id = (ushort) cmd, p1 = 4, lat = tr.Lat, lng = tr.Lng});
-            list.Add(new Locationwp() {alt = 0, frame = frame, id = (ushort) cmd, p1 = 4, lat = br.Lat, lng = br.Lng});
-            list.Add(new Locationwp() {alt = 0, frame = frame, id = (ushort) cmd, p1 = 4, lat = bl.Lat, lng = bl.Lng});
+            list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = tl.Lat, lng = tl.Lng });
+            list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = tr.Lat, lng = tr.Lng });
+            list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = br.Lat, lng = br.Lng });
+            list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = bl.Lat, lng = bl.Lng });
 
             list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = tl.Lat, lng = tl.Lng });
             list.Add(new Locationwp() { alt = 0, frame = frame, id = (ushort)cmd, p1 = 4, lat = tr.Lat, lng = tr.Lng });
@@ -1194,9 +1213,40 @@ namespace MissionPlanner
 
             //mav_mission.upload(MainV2.comPort, MAVLink.MAV_MISSION_TYPE.FENCE, list);
 
-            var mission = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.MISSION);
-            var fence = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.FENCE);
-            var rally = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.RALLY);
+            var mission = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.MISSION).ConfigureAwait(true);
+            var fence = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.FENCE).ConfigureAwait(true);
+            var rally = await mav_mission.download(MainV2.comPort, MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, MAVLink.MAV_MISSION_TYPE.RALLY).ConfigureAwait(true);
+        }
+
+        private void but_lockup_Click(object sender, EventArgs e)
+        {
+            if (CustomMessageBox.Show("Lockup the autopilot??? this can cause a CRASH!!!!!!",
+                    "Lockup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == (int)DialogResult.Yes)
+                if (CustomMessageBox.Show("Lockup the autopilot??? this can cause a CRASH!!!!!!",
+                        "Lockup", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) == (int)DialogResult.Yes)
+                    MainV2.comPort.doCommand(MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid,
+                        MAVLink.MAV_CMD.PREFLIGHT_REBOOT_SHUTDOWN,
+                        42, 24, 71, 93, 0, 0, 0, false);
+        }
+
+        private void but_hexmavlink_Click(object sender, EventArgs e)
+        {
+            string input = "";
+            InputBox.Show("", "enter the hex value 'fd0500001a0c1'", ref input);
+
+            var packet = StringToByteArray(input);
+
+            var mavpacket = new MAVLink.MavlinkParse().ReadPacket(new MemoryStream(packet));
+
+            CustomMessageBox.Show(mavpacket.ToJSON(Formatting.Indented));
+        }
+
+        public static byte[] StringToByteArray(string hex)
+        {
+            return Enumerable.Range(0, hex.Length)
+                .Where(x => x % 2 == 0)
+                .Select(x => Convert.ToByte(hex.Substring(x, 2), 16))
+                .ToArray();
         }
     }
 }

@@ -45,6 +45,13 @@ namespace MissionPlanner.SimpleGrid
             // set and angle that is good
             list = new List<PointLatLngAlt>();
             plugin.Host.FPDrawnPolygon.Points.ForEach(x => { list.Add(x); });
+            var area = calcpolygonarea(plugin.Host.FPDrawnPolygon.Points);
+            if (area > 10000)
+            {
+                NUM_Distance.Value = (int) Math.Sqrt(area) / 10;
+                NUM_spacing.Value = (int) Math.Sqrt(area) / 10;
+            }
+
             NUM_angle.Value = (decimal)((getAngleOfLongestSide(list) + 360) % 360);
 
             // Map Events
@@ -282,7 +289,7 @@ namespace MissionPlanner.SimpleGrid
                 (double) NUM_spacing.Value, (double) NUM_angle.Value, (double) NUM_overshoot.Value,
                 (double) NUM_overshoot2.Value,
                 (Utilities.Grid.StartPosition) Enum.Parse(typeof(Utilities.Grid.StartPosition), CMB_startfrom.Text),
-                false, 0, 0, plugin.Host.cs.HomeLocation);
+                false, 0, 0, plugin.Host.cs.PlannedHomeLocation);
 
             List<PointLatLng> list2 = new List<PointLatLng>();
 

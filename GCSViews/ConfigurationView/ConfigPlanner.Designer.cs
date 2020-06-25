@@ -104,6 +104,7 @@
             this.CMB_altunits = new System.Windows.Forms.ComboBox();
             this.num_gcsid = new System.Windows.Forms.NumericUpDown();
             this.label7 = new System.Windows.Forms.Label();
+            this.CHK_params_bg = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.NUM_tracklength)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.num_gcsid)).BeginInit();
             this.SuspendLayout();
@@ -131,7 +132,8 @@
             resources.GetString("CMB_ratesensors.Items10"),
             resources.GetString("CMB_ratesensors.Items11"),
             resources.GetString("CMB_ratesensors.Items12"),
-            resources.GetString("CMB_ratesensors.Items13")});
+            resources.GetString("CMB_ratesensors.Items13"),
+            resources.GetString("CMB_ratesensors.Items14")});
             resources.ApplyResources(this.CMB_ratesensors, "CMB_ratesensors");
             this.CMB_ratesensors.Name = "CMB_ratesensors";
             this.CMB_ratesensors.SelectedIndexChanged += new System.EventHandler(this.CMB_ratesensors_SelectedIndexChanged);
@@ -252,7 +254,10 @@
             resources.GetString("CMB_raterc.Items8"),
             resources.GetString("CMB_raterc.Items9"),
             resources.GetString("CMB_raterc.Items10"),
-            resources.GetString("CMB_raterc.Items11")});
+            resources.GetString("CMB_raterc.Items11"),
+            resources.GetString("CMB_raterc.Items12"),
+            resources.GetString("CMB_raterc.Items13"),
+            resources.GetString("CMB_raterc.Items14")});
             resources.ApplyResources(this.CMB_raterc, "CMB_raterc");
             this.CMB_raterc.Name = "CMB_raterc";
             this.CMB_raterc.SelectedIndexChanged += new System.EventHandler(this.CMB_raterc_SelectedIndexChanged);
@@ -293,7 +298,10 @@
             resources.GetString("CMB_ratestatus.Items8"),
             resources.GetString("CMB_ratestatus.Items9"),
             resources.GetString("CMB_ratestatus.Items10"),
-            resources.GetString("CMB_ratestatus.Items11")});
+            resources.GetString("CMB_ratestatus.Items11"),
+            resources.GetString("CMB_ratestatus.Items12"),
+            resources.GetString("CMB_ratestatus.Items13"),
+            resources.GetString("CMB_ratestatus.Items14")});
             resources.ApplyResources(this.CMB_ratestatus, "CMB_ratestatus");
             this.CMB_ratestatus.Name = "CMB_ratestatus";
             this.CMB_ratestatus.SelectedIndexChanged += new System.EventHandler(this.CMB_ratestatus_SelectedIndexChanged);
@@ -714,9 +722,17 @@
             resources.ApplyResources(this.label7, "label7");
             this.label7.Name = "label7";
             // 
+            // CHK_params_bg
+            // 
+            resources.ApplyResources(this.CHK_params_bg, "CHK_params_bg");
+            this.CHK_params_bg.Name = "CHK_params_bg";
+            this.CHK_params_bg.UseVisualStyleBackColor = true;
+            this.CHK_params_bg.CheckedChanged += new System.EventHandler(this.CHK_params_bg_CheckedChanged);
+            // 
             // ConfigPlanner
             // 
             resources.ApplyResources(this, "$this");
+            this.Controls.Add(this.CHK_params_bg);
             this.Controls.Add(this.label7);
             this.Controls.Add(this.num_gcsid);
             this.Controls.Add(this.label6);
@@ -878,5 +894,6 @@
         private System.Windows.Forms.ComboBox CMB_altunits;
         private System.Windows.Forms.NumericUpDown num_gcsid;
         private System.Windows.Forms.Label label7;
+        private System.Windows.Forms.CheckBox CHK_params_bg;
     }
 }

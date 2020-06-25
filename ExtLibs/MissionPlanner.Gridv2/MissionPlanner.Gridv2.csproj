@@ -131,9 +131,7 @@
     <Compile Update="..\..\Grid\Grid.cs">
       <Link>Grid.cs</Link>
     </Compile>
-    <Compile Update="GridUIv2.cs">
-      <SubType>Form</SubType>
-    </Compile>
+    <Compile Update="GridUIv2.cs" />
     <Compile Update="GridUIv2.Designer.cs">
       <DependentUpon>GridUIv2.cs</DependentUpon>
     </Compile>
@@ -176,8 +174,16 @@
       <Name>MAVLink</Name>
       <Private>False</Private>
     </ProjectReference>
-    <ProjectReference Include="..\ProjNet\ProjNET.csproj" />
-    <ProjectReference Include="..\Strings\MissionPlanner.Strings.csproj" />
+    <ProjectReference Include="..\MissionPlanner.Drawing\MissionPlanner.Drawing.csproj">
+      <Aliases>Drawing</Aliases>
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\ProjNet\ProjNET.csproj">
+      <Private>false</Private>
+    </ProjectReference>
+    <ProjectReference Include="..\Strings\MissionPlanner.Strings.csproj">
+      <Private>false</Private>
+    </ProjectReference>
     <ProjectReference Include="..\Utilities\MissionPlanner.Utilities.csproj">
       <Project>{1378A66C-38E4-46F5-A05F-DC04EF7D4D16}</Project>
       <Name>MissionPlanner.Utilities</Name>

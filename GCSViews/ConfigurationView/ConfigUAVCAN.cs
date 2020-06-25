@@ -1,18 +1,14 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
-using System.Data;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using MissionPlanner.Controls;
+﻿using MissionPlanner.Controls;
 using MissionPlanner.Utilities;
-using UAVCAN;
+using System;
+using System.Collections.Generic;
+using System.Data;
 using System.Globalization;
 using System.IO;
-using MissionPlanner.Comms;
+using System.Linq;
+using System.Text;
+using System.Windows.Forms;
+using UAVCAN;
 
 namespace MissionPlanner.GCSViews.ConfigurationView
 {
@@ -27,7 +23,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             if (MainV2.comPort.BaseStream.IsOpen && !MainV2.comPort.MAV.param.ContainsKey("CAN_SLCAN_TIMOUT"))
                 this.Enabled = false;
         }
-        
+
         List<UAVCANModel> allnodes = new List<UAVCANModel>();
 
         public void Activate()
@@ -50,26 +46,42 @@ namespace MissionPlanner.GCSViews.ConfigurationView
         {
             but_slcanmode1.Enabled = false;
             but_slcanmode2.Enabled = false;
+
             try
             {
+                if (!MainV2.comPort.BaseStream.IsOpen)
+                {
+                    if (CustomMessageBox.Show(
+                            "You are not currently connected via mavlink. Please make sure the device is already in slcan mode or this is the slcan serialport.",
+                            "SLCAN", CustomMessageBox.MessageBoxButtons.OKCancel) != CustomMessageBox.DialogResult.OK)
+                        return;
+                }
+
                 if (MainV2.comPort.BaseStream.IsOpen)
                 {
                     var cport = MainV2.comPort.MAV.param["CAN_SLCAN_CPORT"].Value;
-                    MainV2.comPort.setParam("CAN_SLCAN_CPORT", canport, true);
+                    MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent,
+                        "CAN_SLCAN_CPORT", canport, true);
                     if (cport == 0)
                     {
-                        CustomMessageBox.Show("Reboot required" + " after setting CPORT. Please reboot!", Strings.ERROR);
+                        CustomMessageBox.Show("Reboot required" + " after setting CPORT. Please reboot!",
+                            Strings.ERROR);
                         return;
                     }
-                    MainV2.comPort.setParam("CAN_SLCAN_TIMOUT", 2, true);
-                    MainV2.comPort.setParam("CAN_P" + canport + "_DRIVER", 1);
-                    MainV2.comPort.setParam("CAN_SLCAN_SERNUM", 0, true); // usb
+
+                    MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent,
+                        "CAN_SLCAN_TIMOUT", 2, true);
+                    MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent,
+                        "CAN_P" + canport + "_DRIVER", 1);
+                    MainV2.comPort.setParam((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent,
+                        "CAN_SLCAN_SERNUM", 0, true); // usb
                 }
             }
-            catch 
+            catch
             {
 
             }
+
             {
                 // grab the connected port
                 var port = MainV2.comPort.BaseStream;
@@ -87,6 +99,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                         BaudRate = int.Parse(MainV2._connectionControl.CMB_baudrate.Text)
                     };
                 }
+
+                if (can == null)
+                    can = new uavcan();
 
                 can.SourceNode = 127;
 
@@ -118,11 +133,22 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                     }
                 }
 
-                if(chk_log.Checked)
+                if (chk_log.Checked)
                     can.LogFile = Settings.Instance.LogDir + Path.DirectorySeparatorChar +
                               DateTime.Now.ToString("yyyy-MM-dd HH-mm-ss") + ".can";
 
-                can.StartSLCAN(port.BaseStream);
+                var prd = new ProgressReporterDialogue();
+                prd.UpdateProgressAndStatus(-1, "Trying to connect");
+                prd.DoWork += sender => can.StartSLCAN(port.BaseStream);
+                prd.btnCancel.Click += (sender, args) =>
+                {
+                    prd.doWorkArgs.CancelAcknowledged = true;
+                    port.Close();
+                };
+                prd.RunBackgroundOperationAsync();
+
+                if (prd.doWorkArgs.CancelRequested || prd.doWorkArgs.ErrorMessage != null)
+                    return;
 
                 can.SetupFileServer();
 
@@ -185,9 +211,14 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                             item.Uptime = TimeSpan.FromSeconds(ns.uptime_sec);
                         }
 
+                        _updatePending = true;
                         this.BeginInvoke((Action)delegate
                         {
-                            uAVCANModelBindingSource.ResetBindings(false);
+                            if (_updatePending)
+                            {
+                                _updatePending = false;
+                                uAVCANModelBindingSource.ResetBindings(false);
+                            }
                         });
                     }
                     else if (msg.GetType() == typeof(UAVCAN.uavcan.uavcan_protocol_GetNodeInfo_res))
@@ -200,18 +231,23 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                         {
                             item.Name = ASCIIEncoding.ASCII.GetString(gnires.name, 0, gnires.name_len);
                             item.HardwareVersion = gnires.hardware_version.major + "." + gnires.hardware_version.minor;
-                            item.SoftwareVersion  = gnires.software_version.major + "." + gnires.software_version.minor + "."+gnires.software_version.vcs_commit.ToString("X");
+                            item.SoftwareVersion = gnires.software_version.major + "." + gnires.software_version.minor + "." + gnires.software_version.vcs_commit.ToString("X");
                             item.SoftwareCRC = gnires.software_version.image_crc;
-                            item.HardwareUID = gnires.hardware_version.unique_id.Select(a=>a.ToString("X2")).Aggregate((a, b) =>
-                                {
-                                    return a + " " + b;
-                                });
+                            item.HardwareUID = gnires.hardware_version.unique_id.Select(a => a.ToString("X2")).Aggregate((a, b) =>
+                                  {
+                                      return a + " " + b;
+                                  });
                             item.RawMsg = gnires;
                         }
 
+                        _updatePending = true;
                         this.BeginInvoke((Action)delegate
                         {
-                            uAVCANModelBindingSource.ResetBindings(false);
+                            if (_updatePending)
+                            {
+                                _updatePending = false;
+                                uAVCANModelBindingSource.ResetBindings(false);
+                            }
                         });
                     }
                 };
@@ -219,6 +255,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
         }
 
         UAVCAN.uavcan can = new UAVCAN.uavcan();
+        private bool _updatePending;
 
         private async void myDataGridView1_CellClick(object sender, DataGridViewCellEventArgs e)
         {
@@ -234,6 +271,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 IProgressReporterDialogue prd = new ProgressReporterDialogue();
                 List<uavcan.uavcan_protocol_param_GetSet_res> paramlist =
                     new List<uavcan.uavcan_protocol_param_GetSet_res>();
+                prd.doWorkArgs.ForceExit = true;
+                prd.doWorkArgs.CancelRequestChanged += (sender2, args) => { prd.doWorkArgs.CancelAcknowledged = true; };
                 prd.DoWork += dialogue =>
                 {
                     paramlist = can.GetParameters(nodeID);
@@ -241,28 +280,41 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 prd.UpdateProgressAndStatus(-1, Strings.GettingParams);
                 prd.RunBackgroundOperationAsync();
 
-                new UAVCANParams(can, nodeID, paramlist).ShowUserControl();
+                if (!prd.doWorkArgs.CancelRequested)
+                    new UAVCANParams(can, nodeID, paramlist).ShowUserControl();
             }
             else if (e.ColumnIndex == myDataGridView1.Columns["updateDataGridViewTextBoxColumn"].Index)
             {
                 ProgressReporterDialogue prd = new ProgressReporterDialogue();
                 uavcan.FileSendProgressArgs filesend = (id, file, percent) =>
                 {
-                    prd.UpdateProgressAndStatus((int) percent, id + " " + file);
+                    prd.UpdateProgressAndStatus((int)percent, id + " " + file);
                 };
                 can.FileSendProgress += filesend;
-                if (CustomMessageBox.Show("Do you want to search the internet for an update?", "Update", CustomMessageBox.MessageBoxButtons.YesNo) == CustomMessageBox.DialogResult.Yes)
+                if (CustomMessageBox.Show("Do you want to search the internet for an update?", "Update",
+                    CustomMessageBox.MessageBoxButtons.YesNo) == CustomMessageBox.DialogResult.Yes)
                 {
                     var devicename = myDataGridView1[nameDataGridViewTextBoxColumn.Index, e.RowIndex].Value.ToString();
-                    var hwversion = double.Parse(myDataGridView1[hardwareVersionDataGridViewTextBoxColumn.Index, e.RowIndex].Value.ToString(), CultureInfo.InvariantCulture);
+                    var hwversion =
+                        double.Parse(
+                            myDataGridView1[hardwareVersionDataGridViewTextBoxColumn.Index, e.RowIndex].Value
+                                .ToString(), CultureInfo.InvariantCulture);
 
-                    var url = can.LookForUpdate(devicename, hwversion);
+                    var usebeta = false;
+
+                    if (CustomMessageBox.Show("Do you want to search for a beta firmware? (not recommended)", "Update",
+                        CustomMessageBox.MessageBoxButtons.YesNo) == CustomMessageBox.DialogResult.Yes)
+                    {
+                        usebeta = true;
+                    }
+
+                    var url = can.LookForUpdate(devicename, hwversion, usebeta);
 
                     if (url != string.Empty)
                     {
                         try
                         {
-                            prd.DoWork += dialogue => 
+                            prd.DoWork += dialogue =>
                             {
                                 var tempfile = Path.GetTempFileName();
                                 Download.getFilefromNet(url, tempfile);
@@ -365,6 +417,26 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 //var index = uAVCANModelBindingSource.Find("ID", id);
                 //uAVCANModelBindingSource.Position = index;
             });
+        }
+
+        private void but_uavcanfilebrowser_Click(object sender, EventArgs e)
+        {
+            if (can == null)
+            {
+                CustomMessageBox.Show(Strings.PleaseConnect);
+                return;
+            }
+
+            if (myDataGridView1.SelectedCells.Count <= 0)
+            {
+                CustomMessageBox.Show(Strings.InvalidField + " Row");
+                return;
+            }
+
+            var id = byte.Parse(myDataGridView1[iDDataGridViewTextBoxColumn.Index, myDataGridView1.SelectedCells[0].RowIndex].Value
+                .ToString());
+
+            new UAVCANFileUI(can, id).ShowUserControl();
         }
     }
 

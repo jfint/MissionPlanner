@@ -50,6 +50,8 @@ namespace MissionPlanner.Controls
         [DefaultValue(typeof(Color), "0x79, 0x94, 0x29")]
         public Color Outline { get { return _Outline; } set { _Outline = value; this.Invalidate(); } }
 
+        protected override Size DefaultSize => base.DefaultSize;
+
         public MyButton()
         {
             _BGGradTop = Color.FromArgb(0x94, 0xc1, 0x1f);
@@ -184,6 +186,11 @@ namespace MissionPlanner.Controls
         {
             _mousedown = false;
             base.OnMouseUp(mevent);
+        }
+
+        protected override void WndProc(ref Message m)
+        {
+            base.WndProc(ref m);
         }
     }
 }

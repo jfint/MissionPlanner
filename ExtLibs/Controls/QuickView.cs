@@ -70,7 +70,7 @@ namespace MissionPlanner.Controls
             {
                 var numb = number.ToString(numberformat);
 
-                Size extent = e.MeasureString("0".PadLeft(numb.Length,'0') + (numb.Contains('-') ? "" : "-"), new Font(this.Font.FontFamily, (float)newSize, this.Font.Style)).ToSize();
+                Size extent = e.MeasureString("0".PadLeft(numb.Length+1,'0'), new Font(this.Font.FontFamily, (float)newSize, this.Font.Style)).ToSize();
 
                 float hRatio = (this.Height - y) / (float)(extent.Height);
                 float wRatio = this.Width / (float)extent.Width;
@@ -93,6 +93,15 @@ namespace MissionPlanner.Controls
         {
             if (this.Visible)
                 base.Refresh();
+        }
+
+        protected override void WndProc(ref Message m) // seems to crash here on linux... so try ignore it
+        {
+            try
+            {
+                base.WndProc(ref m);
+            }
+            catch { }
         }
 
         protected override void OnInvalidated(InvalidateEventArgs e)

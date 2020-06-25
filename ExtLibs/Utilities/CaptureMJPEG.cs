@@ -6,7 +6,7 @@ using System.Net;
 using System.IO;
 using System.Threading;
 using log4net;
-using MissionPlanner.Drawing;
+using System.Drawing;
 
 namespace MissionPlanner.Utilities
 {
@@ -69,6 +69,8 @@ namespace MissionPlanner.Utilities
             }
 
             sb = sb.Replace("\r\n", "");
+
+            log.Debug(sb.ToString());
 
             return sb.ToString();
         }
@@ -159,7 +161,7 @@ namespace MissionPlanner.Utilities
                             */
                             try
                             {
-                                Bitmap frame = new Bitmap(new MemoryStream(buf1));
+                                System.Drawing.Bitmap frame = new System.Drawing.Bitmap(new MemoryStream(buf1));
 
                                 fps++;
 

@@ -61,19 +61,29 @@ namespace UAVCAN
         private Stream sr;
         DateTime uptime = DateTime.Now;
 
-        string ReadLine(Stream st)
+        string ReadLine(Stream st, int timeoutms = 500)
         {
             StringBuilder sb = new StringBuilder();
 
             char cha;
 
-            do
+            var timeout = DateTime.Now.AddMilliseconds(timeoutms);
+
+            try
             {
-                cha = (char)st.ReadByte();
-                if (cha == -1)
-                    break;
-                sb.Append(cha);
-            } while (cha != '\r' && cha != '\a');
+                do
+                {
+                    cha = (char) st.ReadByte();
+                    if (cha == -1)
+                        break;
+                    sb.Append(cha);
+                    if (DateTime.Now > timeout)
+                        break;
+                } while (cha != '\r' && cha != '\a');
+            }
+            catch 
+            {
+            }
 
             return sb.ToString();
         }
@@ -87,6 +97,7 @@ namespace UAVCAN
             //cleanup
             stream.Write(new byte[] { (byte)'\r', (byte)'\r', (byte)'\r' }, 0, 3);
             Thread.Sleep(50);
+            stream.ReadTimeout = 1000;
             stream.Read(new byte[1024 * 1024], 0, 1024 * 1024);
 
             // \a = false;
@@ -114,6 +125,7 @@ namespace UAVCAN
             var resp5 = ReadLine(stream);
 
             sr = stream;
+            var srread = new BufferedStream(stream);
 
             bool run = true;
             Stream logfile = null;
@@ -129,7 +141,7 @@ namespace UAVCAN
                 {
                     try
                     {
-                        var line = ReadLine(stream);
+                        var line = ReadLine(srread);
                         try
                         {
                             logfile?.Write(ASCIIEncoding.ASCII.GetBytes(line), 0, line.Length);
@@ -228,6 +240,7 @@ namespace UAVCAN
                 try
                 {
                     sr.Write(new byte[] { (byte)'C', (byte)'\r' }, 0, 2);
+                    sr.Flush();
                     sr.Close();
                 } catch { }
             }
@@ -292,6 +305,8 @@ namespace UAVCAN
             ushort index = 0;
             var timeout = DateTime.Now.AddSeconds(2);
 
+            SemaphoreSlim wait = new SemaphoreSlim(1);
+
             MessageRecievedDel paramdelegate = (frame, msg, transferID) =>
             {
                 if (frame.IsServiceMsg && frame.SvcDestinationNode != SourceNode)
@@ -307,16 +322,19 @@ namespace UAVCAN
                         return;
                     }
 
-                    paramlist.Add(getsetreq);
-
                     var value = getsetreq.value;
 
                     var name = ASCIIEncoding.ASCII.GetString(getsetreq.name, 0, getsetreq.name_len);
+
+                    if (!paramlist.Any(a => ASCIIEncoding.ASCII.GetString(a.name, 0, a.name_len) == name))
+                        paramlist.Add(getsetreq);
 
                     Console.WriteLine("{0}: {1}", name, value);
 
                     timeout = DateTime.Now.AddSeconds(2);
                     index++;
+
+                    wait.Release();
                 }
             };
             MessageReceived += paramdelegate;
@@ -338,7 +356,7 @@ namespace UAVCAN
                     WriteToStream(slcan);
                 }
 
-                Thread.Sleep(333);
+                wait.Wait(666);
             }
 
             MessageReceived -= paramdelegate;
@@ -731,12 +749,27 @@ namespace UAVCAN
             };
         }
 
-        public string LookForUpdate(string devicename, double hwversion)
+        public string LookForUpdate(string devicename, double hwversion, bool usebeta = false)
         {
-            string[] servers = new string[] { "http://firmware.cubepilot.org:81/UAVCAN/" };
-
-            foreach (var server in servers)
+            Dictionary<string, string> servers = new Dictionary<string, string>()
             {
+                {"com.hex.", "https://firmware.cubepilot.org/UAVCAN/"},
+                {"search.id", "http://localhost/url"}
+            };
+
+            if (usebeta)
+            {
+                servers.Clear();
+                servers.Add("com.hex.", "https://firmware.cubepilot.org/UAVCAN/beta/");
+            }
+
+            foreach (var serverinfo in servers)
+            {
+                if(!devicename.Contains(serverinfo.Key))
+                    continue;
+
+                var server = serverinfo.Value;
+
                 var url = String.Format("{0}{1}/{2}/{3}", server, devicename, hwversion.ToString("0.0##", CultureInfo.InvariantCulture), "firmware.bin");
                 Console.WriteLine("LookForUpdate at " + url);
                 var req = WebRequest.Create(url);
@@ -1222,6 +1255,9 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
                 return Convert.ToByte(a.Item1 + "" + a.Item2, 16);
             });
 
+            if (packet_data == null || packet_data.Count() == 0)
+                return;
+
             //Console.WriteLine(ASCIIEncoding.ASCII.GetString( packet_data));
             //Console.WriteLine("RX " + line.Replace("\r", "\r\n"));
 
@@ -1236,7 +1272,22 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
 
             transfer[(packet_id, payload.TransferID)].AddRange(payload.Payload);
 
-            //todo check toggle
+            {
+                var totalbytes = transfer[(packet_id, payload.TransferID)].Count;
+
+                var current = (totalbytes / 7) % 2;
+
+                if((current == 1) == payload.Toggle)
+                {
+                    if (!payload.EOT)
+                    {
+                        transfer.Remove((packet_id, payload.TransferID));
+                        Console.WriteLine("Bad Toggle {0}", frame.MsgTypeID);
+                        return;
+                        //error here
+                    }
+                }
+            }
 
             if (payload.SOT && !payload.EOT)
             {
@@ -1311,7 +1362,7 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
 
                     if (crc != payload_crc)
                     {
-                        Console.WriteLine("Bad Message " + frame.MsgTypeID);
+                        Console.WriteLine("Bad Message CRC Fail " + frame.MsgTypeID);
                         return;
                     }
                 }
@@ -1406,14 +1457,14 @@ velocity_covariance: [1.8525, 0.0000, 0.0000, 0.0000, 1.8525, 0.0000, 0.0000, 0.
         StringBuilder readsb = new StringBuilder();
         public int Read(byte b)
         {
-            if (b >= '0' && b <= 'z' || b == '\r' || b == '\a' || b == '\n')
+            if (b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F' || b == 't' || b == 'T' || b == 'n' || b == '\r' || b == '\a' || b == '\n')
             {
                 readsb.Append((char) b);
 
                 if (b == '\r' || b == '\a' || b == '\n')
                 {
                     var front = readsb[0];
-                    if (front == 'T' || front == 't' || front == 'n')
+                    if ((front == 'T' || front == 't' || front == 'n'))
                     {
                         var data = readsb.ToString();
                         readsb.Clear();

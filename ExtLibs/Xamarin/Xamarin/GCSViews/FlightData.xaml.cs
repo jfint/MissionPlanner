@@ -1,11 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Reflection;
-using System.Threading;
-using System.Threading.Tasks;
+﻿using Acr.UserDialogs;
+using FormsVideoLibrary;
 using GMap.NET;
 using GMap.NET.MapProviders;
 using GMap.NET.WindowsForms;
@@ -16,21 +10,28 @@ using MissionPlanner.ArduPilot;
 using MissionPlanner.Controls;
 using MissionPlanner.Maps;
 using MissionPlanner.Utilities;
-using MissionPlanner.Drawing;
 using MissionPlanner.Warnings;
 using Plugin.FilePicker;
 using Plugin.FilePicker.Abstractions;
 using SkiaSharp;
 using SkiaSharp.Views.Forms;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
 using Xamarin.Controls;
 using Xamarin.Forms;
 using Xamarin.Forms.Xaml;
 using Color = System.Drawing.Color;
 using Device = Xamarin.Forms.Device;
 using Exception = System.Exception;
-using Graphics = MissionPlanner.Drawing.Graphics;
-using Image = MissionPlanner.Drawing.Image;
-using Pen = MissionPlanner.Drawing.Pen;
+
 
 namespace Xamarin
 {
@@ -185,7 +186,8 @@ namespace Xamarin
             hud1.speedunit = CurrentState.SpeedUnit;
             hud1.distunit = CurrentState.DistanceUnit;
 
-
+            Mode.Items.AddRange(MissionPlanner.ArduPilot.Common.getModesList(MainV2.comPort.MAV.cs.firmware)
+                .Select(a => a.Value));
 
             CheckBatteryShow();
 
@@ -216,6 +218,10 @@ namespace Xamarin
                 {
                 }
             }
+
+            //videoPlayer.Source = VideoSource.FromUri("rtsp://192.168.0.10:8554/H264Video");
+
+            //videoPlayer.Play();
         }
 
         public void BUT_playlog_Click(object sender, EventArgs e)
@@ -504,7 +510,7 @@ namespace Xamarin
             ((Button) sender).IsEnabled = true;
         }
 
-        void cam_camimage(Image camimage)
+        void cam_camimage(System.Drawing.Image camimage)
         {
             hud1.bgimage = camimage;
         }
@@ -690,7 +696,7 @@ namespace Xamarin
         bool playingLog;
         List<PointLatLng> trackPoints = new List<PointLatLng>();
 
-        private void mainloop()
+        private async void mainloop()
         {
             if (threadrun == true)
                 return;
@@ -769,7 +775,7 @@ namespace Xamarin
                     try
                     {
                         if (!MainV2.comPort.giveComport)
-                            MainV2.comPort.readPacket();
+                            await MainV2.comPort.readPacketAsync().ConfigureAwait(false);
 
                         // update currentstate of sysids on the port
                         foreach (var MAV in MainV2.comPort.MAVlist)
@@ -920,7 +926,6 @@ namespace Xamarin
                         hud1.heading = MainV2.comPort.MAV.cs.yaw;
                         hud1.linkqualitygcs = MainV2.comPort.MAV.cs.linkqualitygcs;
                         hud1.message = MainV2.comPort.MAV.cs.messageHigh;
-                        hud1.messagetime = MainV2.comPort.MAV.cs.messageHighTime;
                         hud1.mode = MainV2.comPort.MAV.cs.mode;
                         hud1.navpitch = MainV2.comPort.MAV.cs.nav_pitch;
                         hud1.navroll = MainV2.comPort.MAV.cs.nav_roll;
@@ -942,6 +947,8 @@ namespace Xamarin
                         hud1.critAOA = MainV2.comPort.MAV.cs.crit_AOA;
                         hud1.HoldInvalidation = false;
                         hud1.Invalidate();
+
+                        hud1.Refresh();
                     });
                     // update map
                     if (tracklast.AddSeconds(Settings.Instance.GetDouble("FD_MapUpdateDelay", 1.2)) < DateTime.Now)
@@ -1003,27 +1010,25 @@ namespace Xamarin
 
                                 {
                                     List<Locationwp> mission_items;
-                                    mission_items = MainV2.comPort.MAV.wps.Values.Select(a => (Locationwp) a)
-                                        .ToList();
+                                    mission_items = MainV2.comPort.MAV.wps.Values.Select(a => (Locationwp) a).ToList();
                                     mission_items.RemoveAt(0);
 
                                     if (wps.Count == 1)
                                     {
-                                        overlay.CreateOverlay((MAVLink.MAV_FRAME) wps[0].frame, homeplla,
+                                        overlay.CreateOverlay(homeplla,
                                             mission_items,
                                             0 / CurrentState.multiplieralt, 0 / CurrentState.multiplieralt);
                                     }
                                     else
                                     {
-                                        overlay.CreateOverlay((MAVLink.MAV_FRAME) wps[1].frame, homeplla,
+                                        overlay.CreateOverlay(homeplla,
                                             mission_items,
                                             0 / CurrentState.multiplieralt, 0 / CurrentState.multiplieralt);
 
                                     }
                                 }
 
-                                var existing = gMapControl1.Overlays.Where(a => a.Id == overlay.overlay.Id)
-                                    .ToList();
+                                var existing = gMapControl1.Overlays.Where(a => a.Id == overlay.overlay.Id).ToList();
                                 foreach (var b in existing)
                                 {
                                     gMapControl1.Overlays.Remove(b);
@@ -1076,7 +1081,7 @@ namespace Xamarin
                             var fenceoverlay = new WPOverlay();
                             fenceoverlay.overlay.Id = "fence";
 
-                            fenceoverlay.CreateOverlay(MAVLink.MAV_FRAME.GLOBAL, PointLatLngAlt.Zero,
+                            fenceoverlay.CreateOverlay(PointLatLngAlt.Zero,
                                 MainV2.comPort.MAV.fencepoints.Values.Select(a => (Locationwp) a).ToList(), 0, 0);
 
                             var fence = mymap.Overlays.Where(a => a.Id == "fence");
@@ -1469,6 +1474,7 @@ namespace Xamarin
 
         object updateBindingSourcelock = new object();
         string updateBindingSourceThreadName = "";
+        private string modeselected;
 
         void tfr_GotTFRs(object sender, EventArgs e)
         {
@@ -1734,6 +1740,103 @@ namespace Xamarin
         private void Button_Onclicked(object sender, EventArgs e)
         {
             
+        }
+
+        private MAVLinkInterface mav => MainV2.comPort;
+
+        private async void Arm_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                await MainV2.comPort.doARMAsync(MainV2.comPort.MAV.sysid, MainV2.comPort.MAV.compid, true);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+                //throw;
+            }
+        }
+
+        private async void Disarm_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                await mav.doARMAsync(mav.MAV.sysid, mav.MAV.compid, false);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+               // throw;
+            }
+        }
+
+        private void Set_Mode_OnClicked(object sender, EventArgs e)
+        {
+            mav.setMode(mav.MAV.sysid, mav.MAV.compid, modeselected);
+        }
+
+        private async void Get_Mission_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                await mav_mission.download(mav, mav.MAV.sysid, mav.MAV.compid, MAVLink.MAV_MISSION_TYPE.MISSION);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+                //throw;
+            }
+        }
+
+        private async void Get_Fence_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                await mav_mission.download(mav, mav.MAV.sysid, mav.MAV.compid, MAVLink.MAV_MISSION_TYPE.FENCE);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+                //throw;
+            }
+        }
+
+        private async void Get_Rally_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                await mav_mission.download(mav, mav.MAV.sysid, mav.MAV.compid, MAVLink.MAV_MISSION_TYPE.RALLY);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+                //throw;
+            }
+        }
+
+        private async void Takeoff___2m_OnClicked(object sender, EventArgs e)
+        {
+            try
+            {
+                mav.setMode("GUIDED"); 
+                await mav.doCommandAsync(mav.MAV.sysid, mav.MAV.compid, MAVLink.MAV_CMD.TAKEOFF, 0, 0, 0, 0, 0, 0, 2);
+            }
+            catch (Exception exception)
+            {
+                UserDialogs.Instance.Toast(exception.Message, TimeSpan.FromSeconds(3));
+                Console.WriteLine(exception);
+                //throw;
+            }
+        }
+
+        private void Mode_OnSelectedIndexChanged(object sender, EventArgs e)
+        {
+            modeselected = Mode.SelectedItem.ToString();
         }
     }
 

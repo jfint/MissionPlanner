@@ -1,14 +1,14 @@
-﻿using System;
+﻿
+using SkiaSharp;
 using System.Collections;
 using System.Collections.Generic;
-using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Globalization;
 using System.Linq;
 using System.Text;
-using MissionPlanner.Drawing.Drawing2D;
-using SkiaSharp;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public class Graphics : IGraphics, IDeviceContext, IDisposable
     {
@@ -437,7 +437,7 @@ GRBackendRenderTargetDesc backendRenderTargetDescription = new GRBackendRenderTa
             if (img == null)
                 return;
 
-            _image.DrawImage(img.nativeSKImage,
+            _image.DrawBitmap(img.nativeSkBitmap,
                 new SKRect(srcX, srcY, srcX + srcWidth, srcY + srcHeight),
                 new SKRect(rectangle.X, rectangle.Y, rectangle.Right, rectangle.Bottom), _paint);
 

@@ -1,21 +1,18 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
-using System.Data;
-using System.IO;
-using System.Linq;
-using System.Net;
-using System.Reflection;
-using System.Text;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using log4net;
+﻿using log4net;
 using MissionPlanner.ArduPilot;
 using MissionPlanner.Comms;
 using MissionPlanner.Controls;
 using MissionPlanner.test;
 using MissionPlanner.Utilities;
+using System;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Net;
+using System.Reflection;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews.ConfigurationView
 {
@@ -49,6 +46,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             MainV2.instance.DeviceChanged += Instance_DeviceChanged;
 
             this.Enabled = false;
+
+            flashdone = false;
 
             Task.Run(() =>
             {
@@ -91,23 +90,31 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             if (this.IsDisposed)
                 return;
 
-            this.BeginInvoke((MethodInvoker) delegate
-            {
-                imageLabel.Text = first.VehicleType?.ToString() + " " + first.MavFirmwareVersion.ToString() + " " +
-                                  first.MavFirmwareVersionType.ToString();
+            this.BeginInvoke((MethodInvoker)delegate
+           {
+               imageLabel.Text = first.VehicleType?.ToString() + " " + first.MavFirmwareVersion.ToString() + " " +
+                                 first.MavFirmwareVersionType.ToString();
 
-                this.Enabled = true;
-            });
+               this.Enabled = true;
+           });
         }
 
         public void Deactivate()
         {
             MainV2.instance.DeviceChanged -= Instance_DeviceChanged;
+
+            // reset to official on any reload
+            REL_Type = APFirmware.RELEASE_TYPES.OFFICIAL;
+
+            flashdone = false;
         }
 
         private void Instance_DeviceChanged(MainV2.WM_DEVICECHANGE_enum cause)
         {
             if (cause != MainV2.WM_DEVICECHANGE_enum.DBT_DEVICEARRIVAL)
+                return;
+
+            if (flashdone == true)
                 return;
 
             Task.Run(() =>
@@ -118,6 +125,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
                     try
                     {
+                        // time to appear
+                        Thread.Sleep(20);
                         up = new px4uploader.Uploader(port, 115200);
                     }
                     catch (Exception ex)
@@ -129,9 +138,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                     try
                     {
                         up.identify();
-                        var msg = String.Format("Found board type {0} boardrev {1} bl rev {2} fwmax {3} on {4}",
-                            up.board_type,
-                            up.board_rev, up.bl_rev, up.fw_maxsize, port);
+                        var msg = String.Format("Found board type {0} brdrev {1} blrev {2} fwmax {3} chip {5:X} chipdes {6} on {4}", up.board_type,
+                        up.board_rev, up.bl_rev, up.fw_maxsize, port, up.chip, up.chip_desc);
                         log.Info(msg);
 
                         up.close();
@@ -154,15 +162,18 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             var mavtype = ((APFirmware.MAV_TYPE)(sender as ImageLabel).Tag);
             var dr = CustomMessageBox.Show(Strings.AreYouSureYouWantToUpload + (sender as ImageLabel)?.Text + Strings.QuestionMark,
                 Strings.Continue, MessageBoxButtons.YesNo);
-            if (dr == (int) DialogResult.Yes)
+            if (dr == (int)DialogResult.Yes)
             {
                 LookForPort(mavtype);
             }
         }
 
-        private void LookForPort(APFirmware.MAV_TYPE mavtype)
+        private void LookForPort(APFirmware.MAV_TYPE mavtype, bool alloptions = false)
         {
             var ports = Win32DeviceMgmt.GetAllCOMPorts();
+
+            if (alloptions)
+                ports.Add(default(ArduPilot.DeviceInfo));
 
             foreach (var deviceInfo in ports)
             {
@@ -172,7 +183,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 if (!devid.HasValue)
                     devid = APFirmware.GetBoardID(deviceInfo);
 
-                if (devid.HasValue && devid.Value != 0)
+                if (devid.HasValue && devid.Value != 0 || alloptions == true)
                 {
                     log.InfoFormat("{0}: {1} - {2}", deviceInfo.name, deviceInfo.description, deviceInfo.board);
 
@@ -183,6 +194,9 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                         a.BoardId == devid && a.MavType == mavtype.ToString() &&
                         a.MavFirmwareVersionType == REL_Type.ToString()).ToList();
 
+                    if (alloptions)
+                        fwitems = APFirmware.Manifest.Firmware.ToList();
+
                     if (fwitems?.Count == 1)
                     {
                         baseurl = fwitems[0].Url.ToString();
@@ -190,7 +204,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                     else if (fwitems?.Count > 0)
                     {
                         FirmwareSelection fws = new FirmwareSelection(fwitems, deviceInfo);
-                        fws.ShowXamarinControl(400, 400);
+                        fws.ShowXamarinControl(550, 400);
                         baseurl = fws.FinalResult;
                         if (fws.FinalResult == null)
                         {
@@ -285,8 +299,10 @@ namespace MissionPlanner.GCSViews.ConfigurationView
 
                     var uploadstarttime = DateTime.Now;
 
-                    fw.UploadFlash(deviceInfo.name, tempfile, BoardDetect.boards.pass);
+                    flashdone = true;
 
+                    fw.UploadFlash(deviceInfo.name, tempfile, BoardDetect.boards.pass);
+                    
                     var uploadtime = (DateTime.Now - uploadstarttime).TotalMilliseconds;
 
                     Tracking.AddTiming("Firmware Upload", deviceInfo.board, uploadtime, deviceInfo.description);
@@ -349,7 +365,8 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
-        private string custom_fw_dir = "";
+        private string custom_fw_dir = Settings.Instance["FirmwareFileDirectory"] ?? "";
+        private bool flashdone = false;
 
         private void Lbl_Custom_firmware_label_Click(object sender, EventArgs e)
         {
@@ -361,6 +378,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                 if (File.Exists(fd.FileName))
                 {
                     custom_fw_dir = Path.GetDirectoryName(fd.FileName);
+                    Settings.Instance["FirmwareFileDirectory"] = custom_fw_dir;
 
                     var fw = new Firmware();
 
@@ -433,7 +451,7 @@ namespace MissionPlanner.GCSViews.ConfigurationView
             MainV2.instance.doConnect(mav, MainV2._connectionControl.CMB_serialport.Text,
                 MainV2._connectionControl.CMB_baudrate.Text, false);
 
-            if (!mav.BaseStream.IsOpen)
+            if (mav.BaseStream == null || !mav.BaseStream.IsOpen)
                 return;
 
             if (CustomMessageBox.Show("Are you sure you want to upgrade the bootloader? This can brick your board",
@@ -450,6 +468,11 @@ namespace MissionPlanner.GCSViews.ConfigurationView
                     }
 
             mav?.Close();
+        }
+
+        private void lbl_alloptions_Click(object sender, EventArgs e)
+        {
+            LookForPort(APFirmware.MAV_TYPE.Copter, true);
         }
     }
 }

@@ -1,15 +1,15 @@
-﻿using System;
+﻿using MissionPlanner.Controls;
+using MissionPlanner.Utilities;
+using SharpDX.DirectInput;
+using System;
 using System.Drawing;
 using System.Linq;
 using System.Windows.Forms;
-using MissionPlanner.Controls;
-using MissionPlanner.Utilities;
-using SharpDX.DirectInput;
 
 
 namespace MissionPlanner.Joystick
 {
-    public partial class JoystickSetup : Form
+    public partial class JoystickSetup : MyUserControl, IDeactivate
     {
         bool startup = true;
 
@@ -55,7 +55,7 @@ namespace MissionPlanner.Joystick
 
             try
             {
-                if(Settings.Instance.ContainsKey("joy_elevons"))
+                if (Settings.Instance.ContainsKey("joy_elevons"))
                     CHK_elevons.Checked = bool.Parse(Settings.Instance["joy_elevons"].ToString());
             }
             catch
@@ -67,6 +67,8 @@ namespace MissionPlanner.Joystick
             label14.Text += " " + MainV2.comPort.MAV.cs.firmware.ToString();
 
             var y = label8.Bottom;
+
+            this.SuspendLayout();
 
             for (int a = 1; a <= maxaxis; a++)
             {
@@ -85,8 +87,8 @@ namespace MissionPlanner.Joystick
                 };
 
                 ax.Detect = () => Joystick.getMovingAxis(CMB_joysticks.Text, 16000).ToString();
-                ax.Reverse = () => MainV2.joystick.setReverse(ax.ChannelNo, ax.ReverseValue);
-                ax.SetAxis = () => MainV2.joystick.setAxis(ax.ChannelNo,
+                ax.Reverse = () => MainV2.joystick?.setReverse(ax.ChannelNo, ax.ReverseValue);
+                ax.SetAxis = () => MainV2.joystick?.setAxis(ax.ChannelNo,
                     (Joystick.joystickaxis)Enum.Parse(typeof(Joystick.joystickaxis), ax.ChannelValue));
                 ax.GetValue = () =>
                 {
@@ -105,6 +107,8 @@ namespace MissionPlanner.Joystick
                 if ((ax.Right) > this.Width)
                     this.Width = ax.Right;
             }
+
+            this.ResumeLayout();
 
             if (MainV2.joystick != null && MainV2.joystick.enabled)
             {
@@ -287,9 +291,9 @@ namespace MissionPlanner.Joystick
 
                     var items = this.Controls.Find("hbar" + name, false);
 
-                    if(items.Length > 0)
-                    ((HorizontalProgressBar)items[0]).Value =
-                        MainV2.joystick.isButtonPressed(f) ? 100 : 0;
+                    if (items.Length > 0)
+                        ((HorizontalProgressBar)items[0]).Value =
+                            MainV2.joystick.isButtonPressed(f) ? 100 : 0;
                 }
             }
             catch
@@ -317,16 +321,16 @@ namespace MissionPlanner.Joystick
             if (startup)
                 return;
 
-            string name = ((ComboBox) sender).Name.Replace("cmbbutton", "");
+            string name = ((ComboBox)sender).Name.Replace("cmbbutton", "");
 
-            MainV2.joystick.changeButton((int.Parse(name)), int.Parse(((ComboBox) sender).Text));
+            MainV2.joystick.changeButton((int.Parse(name)), int.Parse(((ComboBox)sender).Text));
         }
 
         private void BUT_detbutton_Click(object sender, EventArgs e)
         {
-            string name = ((MyButton) sender).Name.Replace("mybut", "");
+            string name = ((MyButton)sender).Name.Replace("mybut", "");
 
-            ComboBox cmb = (ComboBox) (this.Controls.Find("cmbbutton" + name, false)[0]);
+            ComboBox cmb = (ComboBox)(this.Controls.Find("cmbbutton" + name, false)[0]);
             cmb.Text = Joystick.getPressedButton(CMB_joysticks.Text).ToString();
         }
 
@@ -359,13 +363,24 @@ namespace MissionPlanner.Joystick
 
             butnumberlist.Location = new Point(butlabel.Right, y);
             butnumberlist.Size = new Size(70, 21);
-            butnumberlist.DataSource = getButtonNumbers();
+            //butnumberlist.DataSource = getButtonNumbers();
+
+            butnumberlist.Items.AddRange(getButtonNumbers().Select(item => item.ToString()).ToArray());
+            butnumberlist.SelectedIndex = 0;
+
+
             butnumberlist.DropDownStyle = ComboBoxStyle.DropDownList;
             butnumberlist.Name = "cmbbutton" + name;
+
+            //butnumberlist.SelectedItem = "-1";
+            butnumberlist.SelectedItem = config.buttonno.ToString();
+
             //if (Settings.Instance["butno" + name] != null)
-            //  butnumberlist.Text = (Settings.Instance["butno" + name].ToString());
+            //    butnumberlist.Text = (Settings.Instance["butno" + name].ToString());
             //if (config.buttonno != -1)
-            butnumberlist.Text = config.buttonno.ToString();
+
+            //butnumberlist.Text = config.buttonno.ToString();
+
             butnumberlist.SelectedIndexChanged += new EventHandler(cmbbutton_SelectedIndexChanged);
 
             but_detect.Location = new Point(butnumberlist.Right, y);
@@ -383,8 +398,11 @@ namespace MissionPlanner.Joystick
             cmbaction.Location = new Point(hbar.Right + 5, y);
             cmbaction.Size = new Size(100, 21);
 
-            cmbaction.DataSource = Enum.GetNames(typeof (Joystick.buttonfunction));
-                //Common.getModesList(MainV2.comPort.MAV.cs);
+            //cmbaction.DataSource = Enum.GetNames(typeof(Joystick.buttonfunction));
+            cmbaction.Items.AddRange(Enum.GetNames(typeof(Joystick.buttonfunction)));
+
+
+            //Common.getModesList(MainV2.comPort.MAV.cs);
             //cmbaction.ValueMember = "Key";
             //cmbaction.DisplayMember = "Value";
             cmbaction.Tag = name;
@@ -409,48 +427,48 @@ namespace MissionPlanner.Joystick
             if ((but_settings.Bottom + 30) > this.Height)
                 this.Height += 25;
 
-            if ((but_settings.Right ) > this.Width)
+            if ((but_settings.Right) > this.Width)
                 this.Width = but_settings.Right + 5;
         }
 
         void cmbaction_SelectedIndexChanged(object sender, EventArgs e)
         {
-            int num = int.Parse(((Control) sender).Tag.ToString());
+            int num = int.Parse(((Control)sender).Tag.ToString());
             var config = MainV2.joystick.getButton(num);
             config.function =
-                (Joystick.buttonfunction) Enum.Parse(typeof (Joystick.buttonfunction), ((Control) sender).Text);
+                (Joystick.buttonfunction)Enum.Parse(typeof(Joystick.buttonfunction), ((Control)sender).Text);
             MainV2.joystick.setButton(num, config);
         }
 
         void but_settings_Click(object sender, EventArgs e)
         {
-            var cmb = ((Control) sender).Tag as ComboBox;
+            var cmb = ((Control)sender).Tag as ComboBox;
 
-            switch ((Joystick.buttonfunction) Enum.Parse(typeof (Joystick.buttonfunction), cmb.SelectedItem.ToString()))
+            switch ((Joystick.buttonfunction)Enum.Parse(typeof(Joystick.buttonfunction), cmb.SelectedItem.ToString()))
             {
                 case Joystick.buttonfunction.ChangeMode:
-                    new Joy_ChangeMode((string) cmb.Tag).ShowDialog();
+                    new Joy_ChangeMode((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Mount_Mode:
-                    new Joy_Mount_Mode((string) cmb.Tag).ShowDialog();
+                    new Joy_Mount_Mode((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Do_Repeat_Relay:
-                    new Joy_Do_Repeat_Relay((string) cmb.Tag).ShowDialog();
+                    new Joy_Do_Repeat_Relay((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Do_Repeat_Servo:
-                    new Joy_Do_Repeat_Servo((string) cmb.Tag).ShowDialog();
+                    new Joy_Do_Repeat_Servo((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Do_Set_Relay:
-                    new Joy_Do_Set_Relay((string) cmb.Tag).ShowDialog();
+                    new Joy_Do_Set_Relay((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Do_Set_Servo:
-                    new Joy_Do_Set_Servo((string) cmb.Tag).ShowDialog();
+                    new Joy_Do_Set_Servo((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Button_axis0:
-                    new Joy_Button_axis((string) cmb.Tag).ShowDialog();
+                    new Joy_Button_axis((string)cmb.Tag).ShowDialog();
                     break;
                 case Joystick.buttonfunction.Button_axis1:
-                    new Joy_Button_axis((string) cmb.Tag).ShowDialog();
+                    new Joy_Button_axis((string)cmb.Tag).ShowDialog();
                     break;
                 default:
                     CustomMessageBox.Show("No settings to set", "No settings");
@@ -470,6 +488,7 @@ namespace MissionPlanner.Joystick
             }
         }
 
+       
         private void JoystickSetup_FormClosed(object sender, FormClosedEventArgs e)
         {
             timer1.Stop();
@@ -493,6 +512,17 @@ namespace MissionPlanner.Joystick
         private void chk_manualcontrol_CheckedChanged(object sender, EventArgs e)
         {
             MainV2.joystick.manual_control = chk_manualcontrol.Checked;
+        }
+
+        public void Deactivate()
+        {
+            timer1.Stop();
+
+            if (MainV2.joystick != null && MainV2.joystick.enabled == false)
+            {
+                MainV2.joystick.UnAcquireJoyStick();
+                MainV2.joystick = null;
+            }
         }
     }
 }

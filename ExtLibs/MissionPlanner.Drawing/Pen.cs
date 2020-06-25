@@ -1,8 +1,9 @@
 ﻿using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using SkiaSharp;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public class Pen: ICloneable, IDisposable
     {
@@ -45,7 +46,7 @@ namespace MissionPlanner.Drawing
         {
         }
 
-        public Pen(Brush brush, float width): this(brush.nativeBrush.Color,width)
+        public Pen(Brush brush, float width): this(brush._color,width)
         {
         }
 

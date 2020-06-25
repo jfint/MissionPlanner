@@ -1,7 +1,7 @@
-﻿using System;
-using System.Windows.Forms;
-using MissionPlanner.Mavlink;
+﻿using MissionPlanner.Mavlink;
 using MissionPlanner.Utilities;
+using System;
+using System.Windows.Forms;
 
 namespace MissionPlanner.Controls
 {
@@ -58,7 +58,7 @@ namespace MissionPlanner.Controls
 
                 string pass = "";
 
-                if (InputBox.Show("Input Seed", "Please enter your pass prase", ref pass) == DialogResult.OK)
+                if (InputBox.Show("Input Seed", "Please enter your pass phrase", ref pass) == DialogResult.OK)
                 {
                     var input = InputBox.value;
 

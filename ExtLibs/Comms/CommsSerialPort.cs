@@ -20,7 +20,11 @@ namespace MissionPlanner.Comms
 
         private static string portnamenice = "";
 
-        public SerialPort(string comPortName, int key): base(comPortName,key)
+        public SerialPort(string comPortName, int baudrate): base(comPortName, baudrate)
+        {
+        }
+
+        public SerialPort(string comPortName) : base(comPortName)
         {
         }
 
@@ -94,7 +98,7 @@ namespace MissionPlanner.Comms
             try
             {
                 // this causes element not found with bluetooth devices.
-                if (BaudRate > 115200)
+                if (BaudRate >= 115200)
                 {
                     Console.WriteLine("Doing SerialPortFixer");
                     SerialPortFixer.Execute(PortName);
@@ -228,10 +232,10 @@ namespace MissionPlanner.Comms
 
                 try
                 {
-                    ports = System.IO.Ports.SerialPort.GetPortNames()
-                        .Select(p => p.TrimEnd())
-                        .Select(FixBlueToothPortNameBug)
-                        .ToArray();
+                    ports = System.IO.Ports.SerialPort.GetPortNames();
+                    // any exceptions will still result in a list
+                    ports = ports.Select(p => p?.TrimEnd()).ToArray();
+                    ports = ports.Select(FixBlueToothPortNameBug).ToArray();
                 }
                 catch
                 {
@@ -240,7 +244,7 @@ namespace MissionPlanner.Comms
                 if (ports != null)
                     allPorts.AddRange(ports);
 
-                return allPorts.ToArray();
+                return allPorts.Distinct().ToArray();
             }
         }
 
@@ -250,6 +254,9 @@ namespace MissionPlanner.Comms
             lock (locker)
             {
                 portnamenice = "";
+
+                if (port == "AUTO" || port == "UDP" || port == "UDPCl" || port == "TCP" || port == "WS")
+                    return "";
 
                 if (comportnamecache.ContainsKey(port))
                 {
@@ -325,6 +332,8 @@ namespace MissionPlanner.Comms
         // See http://connect.microsoft.com/VisualStudio/feedback/details/236183/system-io-ports-serialport-getportnames-error-with-bluetooth
         private static string FixBlueToothPortNameBug(string portName)
         {
+            if (portName == null)
+                return null;
             if (!portName.StartsWith("COM"))
                 return portName;
             var newPortName = "COM"; // Start over with "COM"

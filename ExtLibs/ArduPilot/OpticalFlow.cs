@@ -1,6 +1,6 @@
-﻿using MissionPlanner.Drawing;
-using System;
+﻿using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.IO;
 using System.Runtime.InteropServices;
 using Color = System.Drawing.Color;
@@ -90,7 +90,7 @@ namespace MissionPlanner.Utilities
                         if (imageBuffer.Length > msgDataTransmissionHandshake.size)
                             return true;
 
-                        var buffer = imageBuffer.ToArray();
+                        var buffer = imageBuffer.GetBuffer();
 
                         Marshal.Copy(buffer, 0, bitmapData.Scan0, buffer.Length);
                         bmp.UnlockBits(bitmapData);

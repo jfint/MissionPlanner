@@ -1,11 +1,8 @@
 ﻿using log4net;
-using System;
-using System.ComponentModel;
-using System.Threading;
-using System.Windows.Forms;
 using MissionPlanner.test;
+using System;
+using System.Windows.Forms;
 using Xamarin.Forms;
-using Xamarin.Forms.Platform.WinForms;
 
 namespace MissionPlanner.Utilities
 {
@@ -26,11 +23,11 @@ namespace MissionPlanner.Utilities
         {
             if (height)
             {
-                return (int) ((current / (double) ctl.Height) * 100.0);
+                return (int)((current / (double)ctl.Height) * 100.0);
             }
             else
             {
-                return (int) ((current / (double) ctl.Width) * 100.0);
+                return (int)((current / (double)ctl.Width) * 100.0);
             }
         }
 
@@ -38,38 +35,38 @@ namespace MissionPlanner.Utilities
         {
             if (height)
             {
-                return (int)((current/100.0 * (double)ctl.Height));
+                return (int)((current / 100.0 * (double)ctl.Height));
             }
             else
             {
-                return (int)((current/100.0 * (double)ctl.Width) );
+                return (int)((current / 100.0 * (double)ctl.Width));
             }
         }
 
         public static void LogInfoFormat(this Control ctl, string format, params object[] args)
         {
-            ILog log = LogManager.GetLogger(ctl.GetType().FullName);
+            ILog log = LogManager.GetLogger(ctl.GetType());
 
             log.InfoFormat(format, args);
         }
 
         public static void LogErrorFormat(this Control ctl, string format, params object[] args)
         {
-            ILog log = LogManager.GetLogger(ctl.GetType().FullName);
+            ILog log = LogManager.GetLogger(ctl.GetType());
 
             log.ErrorFormat(format, args);
         }
 
         public static void LogInfo(this Control ctl, object ex)
         {
-            ILog log = LogManager.GetLogger(ctl.GetType().FullName);
+            ILog log = LogManager.GetLogger(ctl.GetType());
 
             log.Info(ex);
         }
 
         public static void LogError(this Control ctl, object ex)
         {
-            ILog log = LogManager.GetLogger(ctl.GetType().FullName);
+            ILog log = LogManager.GetLogger(ctl.GetType());
 
             log.Error(ex);
         }
@@ -81,7 +78,7 @@ namespace MissionPlanner.Utilities
 
             f.Width = Width;
             f.Height = Height;
-            var app = new Xamarin.Forms.Application() {MainPage = ctl};
+            var app = new Xamarin.Forms.Application() { MainPage = ctl };
             f.LoadApplication(app);
             ThemeManager.ApplyThemeTo(f);
             if (ctl is IClose)
@@ -95,7 +92,7 @@ namespace MissionPlanner.Utilities
         }
 
 
-        public static Form ShowUserControl(this Control ctl)
+        public static Form ShowUserControl(this Control ctl, bool showit = true)
         {
             Form frm = new Form();
             int header = frm.Height - frm.ClientRectangle.Height;
@@ -105,14 +102,29 @@ namespace MissionPlanner.Utilities
             frm.Height += header;
             frm.Tag = ctl;
             ctl.Dock = DockStyle.Fill;
+            ctl.SizeChanged += Ctl_SizeChanged;
+            ctl.Tag = frm;
             frm.MinimumSize = ctl.MinimumSize;
             frm.MaximumSize = ctl.MaximumSize;
             frm.Controls.Add(ctl);
             frm.Load += Frm_Load;
             frm.Closing += Frm_Closing;
-            frm.Show();
+            if (showit)
+                frm.Show();
 
             return frm;
+        }
+
+        private static void Ctl_SizeChanged(object sender, EventArgs e)
+        {
+            var ctl = (sender as Control);
+            if (ctl == null)
+                return;
+            var frm = ctl.Tag as Form;
+            if (frm == null)
+                return;
+
+            frm.ClientSize = ctl.ClientSize;
         }
 
         private static void Frm_Closing(object sender, System.ComponentModel.CancelEventArgs e)
@@ -120,6 +132,11 @@ namespace MissionPlanner.Utilities
             if (((Form)sender).Tag is MissionPlanner.Controls.IDeactivate)
             {
                 ((MissionPlanner.Controls.IDeactivate)((Form)sender).Tag).Deactivate();
+            }
+
+            if (((Form)sender).Tag is MyUserControl)
+            {
+                (((Form)sender).Tag as MyUserControl).Close();
             }
         }
 

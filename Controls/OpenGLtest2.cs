@@ -2,9 +2,12 @@
 using GMap.NET.MapProviders;
 using GMap.NET.WindowsForms;
 using Microsoft.Scripting.Utils;
+using MissionPlanner.GCSViews;
 using MissionPlanner.Utilities;
 using OpenTK;
+using OpenTK.Graphics;
 using OpenTK.Graphics.OpenGL;
+using OpenTK.Platform;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -14,9 +17,12 @@ using System.Drawing.Imaging;
 using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Threading.Tasks;
 using System.Windows.Forms;
-using MissionPlanner.GCSViews;
+using OpenTK.Input;
 using MathHelper = MissionPlanner.Utilities.MathHelper;
+using MouseEventArgs = System.Windows.Forms.MouseEventArgs;
+using Timer = System.Windows.Forms.Timer;
 using Vector3 = OpenTK.Vector3;
 
 namespace MissionPlanner.Controls
@@ -40,9 +46,14 @@ namespace MissionPlanner.Controls
         // image zoom level
         public int zoom { get; set; } = 20;
 
-        RectLatLng area = new RectLatLng(-35.04286, 117.84262, 0.1, 0.1);
         private NumericUpDown num_minzoom;
         private NumericUpDown num_maxzoom;
+
+        private SemaphoreSlim textureSemaphore = new SemaphoreSlim(1, 1);
+        private CheckBox chk_locktomav;
+        private Timer timer1;
+        private System.ComponentModel.IContainer components;
+        private CheckBox chk_fog;
 
         private PointLatLngAlt _center { get; set; } = new PointLatLngAlt(-34.9807459, 117.8514028, 70);
 
@@ -61,7 +72,7 @@ namespace MissionPlanner.Controls
                 _center.Lng = value.Lng;
                 _center.Alt = value.Alt;
 
-                if (utmzone != value.GetUTMZone())
+                if (utmzone != value.GetUTMZone() || llacenter.GetDistance(_center) > 10000)
                 {
                     utmzone = value.GetUTMZone();
 
@@ -96,7 +107,7 @@ namespace MissionPlanner.Controls
 
         public List<Locationwp> WPs { get; set; }
 
-        public OpenGLtest2()
+        public OpenGLtest2() : base(new GraphicsMode(32,24,0,2))
         {
             instance = this;
 
@@ -111,10 +122,15 @@ namespace MissionPlanner.Controls
             type = GMap.NET.MapProviders.GoogleSatelliteMapProvider.Instance;
             prj = type.Projection;
 
+            LocationCenter = LocationCenter.newpos(0, 0.1);
+
             this.Invalidate();
 
-            bg = new Thread(imageLoader) {IsBackground = true};
-            bg.Start();
+            _imageloaderThread = new Thread(imageLoader)
+            {
+                IsBackground = true, Name = "gl imageLoader"
+            };
+            _imageloaderThread.Start();
         }
 
         private void OnMouseDown(object sender, MouseEventArgs e)
@@ -127,13 +143,12 @@ namespace MissionPlanner.Controls
             MainV2.comPort.setGuidedModeWP(
                 new Locationwp().Set(mouseDownPos.Lat, mouseDownPos.Lng, MainV2.comPort.MAV.GuidedMode.z,
                     (ushort) MAVLink.MAV_CMD.WAYPOINT), false);
-            //MainV2.C
         }
 
         private void OnMouseMove(object sender, MouseEventArgs e)
         {
-            var x = ((MouseEventArgs) e).X;
-            var y = ((MouseEventArgs) e).Y;
+            mousex = ((MouseEventArgs) e).X;
+            mousey = ((MouseEventArgs) e).Y;
             /*
             var point = getMousePos(x, y);
 
@@ -159,19 +174,12 @@ namespace MissionPlanner.Controls
             //Thread.Sleep(1000);
         }
 
+        int[] viewport = new int[4];
+        Matrix4 modelMatrix, projMatrix;
+
         public PointLatLngAlt getMousePos(int x, int y)
         {
             //https://gamedev.stackexchange.com/questions/103483/opentk-ray-picking
-            int[] viewport = new int[4];
-            Matrix4 modelMatrix, projMatrix;
-
-            if (!Context.IsCurrent)
-                MakeCurrent();
-
-            GL.GetFloat(GetPName.ModelviewMatrix, out modelMatrix);
-            GL.GetFloat(GetPName.ProjectionMatrix, out projMatrix);
-            GL.GetInteger(GetPName.Viewport, viewport);
-
             var _start = UnProject(new Vector3(x, y, 0.0f), projMatrix, modelMatrix,
                 new Size(viewport[2], viewport[3]));
             var _end = UnProject(new Vector3(x, y, 1), projMatrix, modelMatrix, new Size(viewport[2], viewport[3]));
@@ -181,7 +189,10 @@ namespace MissionPlanner.Controls
             var plla = pos.ToLLA();
             plla.Alt = _end.Z;
 
-            var point = srtm.getIntersectionWithTerrain(_center, plla);
+            var camera = new utmpos(utmcenter[0] + cameraX, utmcenter[1] + cameraY, utmzone).ToLLA();
+            camera.Alt = cameraZ;
+
+            var point = srtm.getIntersectionWithTerrain(camera, plla);
 
             return point;
         }
@@ -299,7 +310,7 @@ namespace MissionPlanner.Controls
                 (float) TextureEnvModeCombine.Replace); //Important, or wrong color on some computers
 
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter,
-                (int) TextureMinFilter.Linear);
+                (int) TextureMinFilter.LinearMipmapLinear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter,
                 (int) TextureMagFilter.Linear);
 
@@ -312,48 +323,77 @@ namespace MissionPlanner.Controls
         {
             core.Zoom = minzoom;
 
+            GMaps.Instance.CacheOnIdleRead = false;
+            GMaps.Instance.BoostCacheEngine = true;
+
+            while (started == false)
+                Thread.Sleep(20);
+
+            // shared context
+            IMGContext = new GraphicsContext(this.GraphicsMode, this.WindowInfo);
+
             while (!this.IsDisposed)
             {
-                System.Threading.Thread.Sleep(100);
+                if (sizeChanged)
+                {
+                    sizeChanged = false;
+                    core.OnMapSizeChanged(1000, 1000);
+                }
 
+                if (_center.GetDistance(core.Position) > 30)
+                {
+                    core.Position = _center;
+                    core.Zoom = minzoom;
+                }
+
+                // wait for current to load
                 if (core.tileLoadQueue.Count > 0)
                 {
-                    System.Threading.Thread.Sleep(500);
+                    System.Threading.Thread.Sleep(100);
                     continue;
                 }
 
+                if (core.FailedLoads.Count > 0)
+                {
+
+                }
+
+                // current has loaded - process
+                generateTextures();
+
+                // change zoom and loop
                 if (core.Zoom >= zoom)
-                    core.Zoom = minzoom;
+                {
+
+                    System.Threading.Thread.Sleep(5000);
+                    continue;
+                }
 
                 core.Zoom = core.Zoom + 1;
 
-                generateTextures();
+                System.Threading.Thread.Sleep(100);
             }
         }
 
-        public int minzoom { get; set; } = 10;
+        public int minzoom { get; set; } = 12;
 
         private int utmzone = -999;
-        private double[] utmcenter = new double[2];
         private PointLatLngAlt llacenter = PointLatLngAlt.Zero;
+        private double[] utmcenter = new double[2];
         private PointLatLngAlt mouseDownPos;
-        private Thread bg;
+        private Thread _imageloaderThread;
+        private int mousex;
+        private int mousey;
+        private GraphicsContext IMGContext;
+        private bool started;
+        private bool onpaintrun;
+        private bool sizeChanged;
+        private double[] mypos = new double[3];
+        Vector3 myrpy = Vector3.UnitX;
+        private bool fogon = true;
 
         double[] convertCoords(PointLatLngAlt plla)
         {
-            /*
-            var latMid = llacenter.Lat;
-            var lngMid = llacenter.Lng;
-
-            var m_per_deg_lat = 111132.954 - 559.822 * Math.Cos(2 * latMid) + 1.175 * Math.Cos(4 * latMid);
-            var m_per_deg_lon = 111132.954 * Math.Cos(latMid);
-
-            var deltaLat = (latMid - plla.Lat);
-            var deltaLon = (lngMid - plla.Lng);
-
-            return new[] { deltaLat * m_per_deg_lat, deltaLon * m_per_deg_lon,  plla.Alt};
-            */
-
             var utm = plla.ToUTM(utmzone);
 
             Array.Resize(ref utm, 3);
@@ -368,6 +408,11 @@ namespace MissionPlanner.Controls
 
         protected override void OnPaint(System.Windows.Forms.PaintEventArgs e)
         {
+            if (!started)
+                timer1.Start();
+
+            started = true;
+            onpaintrun = true;
             try
             {
                 base.OnPaint(e);
@@ -387,218 +432,291 @@ namespace MissionPlanner.Controls
             if (this.DesignMode)
                 return;
 
-            if (area.LocationMiddle.Lat == 0 && area.LocationMiddle.Lng == 0)
+            var beforewait = DateTime.Now;
+            if (textureSemaphore.Wait(1) == false)
                 return;
-
-            if (DateTime.Now.Second % 3 == 0)
-                core.Position = _center;
-
-            double heightscale = 1; //(step/90.0)*5;
-
-            var campos = convertCoords(_center);
-
-            cameraX = campos[0];
-            cameraY = campos[1];
-            cameraZ = (campos[2] < srtm.getAltitude(_center.Lat, _center.Lng).alt)
-                ? (srtm.getAltitude(_center.Lat, _center.Lng).alt + 1) * heightscale
-                : _center.Alt * heightscale; // (srtm.getAltitude(lookZ, lookX, 20) + 100) * heighscale;
-
-            lookX = campos[0] + Math.Sin(MathHelper.Radians(rpy.Z)) * 100;
-            lookY = campos[1] + Math.Cos(MathHelper.Radians(rpy.Z)) * 100;
-            lookZ = cameraZ;
-
-            var size = 5000;
-
-            // in front
-            PointLatLngAlt front = _center.newpos(rpy.Z, size);
-            // behind
-            PointLatLngAlt behind = _center.newpos(rpy.Z, -50);
-            // left : 90 allows for 180 degree viewing angle
-            PointLatLngAlt left = _center.newpos(rpy.Z - 45, size);
-            // right
-            PointLatLngAlt right = _center.newpos(rpy.Z + 45, size);
-
-            double maxlat = Math.Max(left.Lat, Math.Max(right.Lat, Math.Max(front.Lat, behind.Lat)));
-            double minlat = Math.Min(left.Lat, Math.Min(right.Lat, Math.Min(front.Lat, behind.Lat)));
-
-            double maxlng = Math.Max(left.Lng, Math.Max(right.Lng, Math.Max(front.Lng, behind.Lng)));
-            double minlng = Math.Min(left.Lng, Math.Min(right.Lng, Math.Min(front.Lng, behind.Lng)));
-
-            area = RectLatLng.FromLTRB(minlng, maxlat, maxlng, minlat);
-
-            if (!Context.IsCurrent)
-                MakeCurrent();
-
-
-            /*Console.WriteLine("cam: {0} {1} {2} lookat: {3} {4} {5}", (float) cameraX, (float) cameraY, (float) cameraZ,
-                (float) lookX,
-                (float) lookY, (float) lookZ);
-              */
-            Matrix4 modelview = Matrix4.LookAt((float) cameraX, (float) cameraY, (float) cameraZ + 100f * 0,
-                (float) lookX, (float) lookY, (float) lookZ,
-                0, 0, 1);
-
-            GL.MatrixMode(MatrixMode.Modelview);
-
-            // roll
-            modelview = Matrix4.Mult(modelview, Matrix4.CreateRotationZ((float) (rpy.X * MathHelper.deg2rad)));
-            // pitch
-            modelview = Matrix4.Mult(modelview, Matrix4.CreateRotationX((float) (rpy.Y * -MathHelper.deg2rad)));
-
-            GL.LoadMatrix(ref modelview);
-
-            //GL.Viewport(0, 0, Width, Height);
-
-            GL.ClearColor(Color.CornflowerBlue);
-
-            GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit | ClearBufferMask.AccumBufferBit);
-
-            GL.Enable(EnableCap.Fog);
-            GL.Disable(EnableCap.Lighting);
-
-            Lighting.SetupAmbient(0.1f);
-            Lighting.SetDefaultMaterial(1f);
-            //      Lighting.SetupLightZero(new Vector3d(cameraX, cameraY, cameraZ + 100), 0f);
-
-
-            GL.Fog(FogParameter.FogColor, new float[] {100 / 255.0f, 149 / 255.0f, 237 / 255.0f, 1f});
-            GL.Fog(FogParameter.FogDensity, 0.1f);
-            GL.Fog(FogParameter.FogMode, (int) FogMode.Linear);
-            GL.Fog(FogParameter.FogStart, (float) 300);
-            GL.Fog(FogParameter.FogEnd, (float) 2000);
-
-            GL.Disable(EnableCap.DepthTest);
-            //GL.DepthFunc(DepthFunction.Always);
-
-            var texlist = textureid.ToArray().ToSortedList(Comparison);
-
-            int textureload = 0;
-
-            foreach (var tidict in texlist)
+            var afterwait = DateTime.Now;
+            try
             {
-                if (!tidict.Value.textureReady)
+                double heightscale = 1; //(step/90.0)*5;
+
+                var campos = convertCoords(_center);
+                var rpy = this.rpy;
+
+                // use mypos if we are not tracking the mav
+                if (!chk_locktomav.Checked)
                 {
-                    if (textureload < 1)
+                    campos = mypos;
+                    rpy = myrpy;
+
+                    KeyboardState input = Keyboard.GetState();
+
+                    float speed = (1.5f);
+                    Vector3 position = new Vector3((float) campos[0], (float) campos[1], (float) campos[2]);
+                    Vector3 front = Vector3.Normalize(new Vector3((float) Math.Sin(MathHelper.Radians(rpy.Z)) * 1,
+                        (float) Math.Cos(MathHelper.Radians(rpy.Z)) * 1, 0));
+                    Vector3 up = new Vector3(0.0f, 0.0f, 1.0f);
+
+                    if (input.IsKeyDown(Key.W))
                     {
-                        textureload++;
+                        position += front * speed; //Forward 
                     }
-                    else
+
+                    if (input.IsKeyDown(Key.S))
                     {
-                        continue;
+                        position -= front * speed; //Backwards
+                    }
+
+                    if (input.IsKeyDown(Key.A))
+                    {
+                        position -= Vector3.Normalize(Vector3.Cross(front, up)) * speed; //Left
+                    }
+
+                    if (input.IsKeyDown(Key.D))
+                    {
+                        position += Vector3.Normalize(Vector3.Cross(front, up)) * speed; //Right
+                    }
+
+                    if (input.IsKeyDown(Key.Q))
+                    {
+                        rpy.Z -= speed;
+                    }
+
+                    if (input.IsKeyDown(Key.E))
+                    {
+                        rpy.Z += speed;
+                    }
+
+                    if (input.IsKeyDown(Key.R))
+                    {
+                        position.Z += speed / 2;
+                    }
+
+                    if (input.IsKeyDown(Key.F))
+                    {
+                        position.Z -= speed / 2;
+                    }
+
+                    campos[0] = position.X;
+                    campos[1] = position.Y;
+                    campos[2] = position.Z;
+
+                    _center.Alt = campos[2];
+                }
+
+                // save the state
+                mypos = campos;
+                myrpy = rpy;
+
+
+                cameraX = campos[0];
+                cameraY = campos[1];
+                cameraZ = (campos[2] < srtm.getAltitude(_center.Lat, _center.Lng).alt)
+                    ? (srtm.getAltitude(_center.Lat, _center.Lng).alt + 1) * heightscale
+                    : _center.Alt * heightscale; // (srtm.getAltitude(lookZ, lookX, 20) + 100) * heighscale;
+
+                lookX = campos[0] + Math.Sin(MathHelper.Radians(rpy.Z)) * 100;
+                lookY = campos[1] + Math.Cos(MathHelper.Radians(rpy.Z)) * 100;
+                lookZ = cameraZ;
+
+                if (!Context.IsCurrent)
+                    Context.MakeCurrent(this.WindowInfo);
+
+
+                /*Console.WriteLine("cam: {0} {1} {2} lookat: {3} {4} {5}", (float) cameraX, (float) cameraY, (float) cameraZ,
+                    (float) lookX,
+                    (float) lookY, (float) lookZ);
+                  */
+                Matrix4 modelview = Matrix4.LookAt((float) cameraX, (float) cameraY, (float) cameraZ + 100f * 0,
+                    (float) lookX, (float) lookY, (float) lookZ,
+                    0, 0, 1);
+
+                GL.MatrixMode(MatrixMode.Modelview);
+
+                // roll
+                modelview = Matrix4.Mult(modelview, Matrix4.CreateRotationZ((float) (rpy.X * MathHelper.deg2rad)));
+                // pitch
+                modelview = Matrix4.Mult(modelview, Matrix4.CreateRotationX((float) (rpy.Y * -MathHelper.deg2rad)));
+
+                GL.LoadMatrix(ref modelview);
+
+                {
+                    // for unproject - updated on every draw
+                    GL.GetFloat(GetPName.ModelviewMatrix, out modelMatrix);
+                    GL.GetFloat(GetPName.ProjectionMatrix, out projMatrix);
+                    GL.GetInteger(GetPName.Viewport, viewport);
+                }
+                var beforeclear = DateTime.Now;
+                //GL.Viewport(0, 0, Width, Height);
+
+                GL.ClearColor(Color.CornflowerBlue);
+
+                GL.Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit |
+                         ClearBufferMask.AccumBufferBit);
+
+                if(fogon)
+                    GL.Enable(EnableCap.Fog);
+                else
+                    GL.Disable(EnableCap.Fog);
+
+                GL.Enable(EnableCap.Lighting);
+
+                Lighting.SetupAmbient(0.1f);
+                Lighting.SetDefaultMaterial(1f);
+                //Lighting.SetupLightZero(new Vector3d(cameraX, cameraY, cameraZ + 1000), 0f);
+
+
+                GL.Fog(FogParameter.FogColor, new float[] {100 / 255.0f, 149 / 255.0f, 237 / 255.0f, 1f});
+                GL.Fog(FogParameter.FogDensity, 0.1f);
+                GL.Fog(FogParameter.FogMode, (int) FogMode.Linear);
+                GL.Fog(FogParameter.FogStart, (float) 5000);
+                GL.Fog(FogParameter.FogEnd, (float) 10000);
+
+                // clear the depth buffer
+                GL.Clear(ClearBufferMask.DepthBufferBit);
+                // enable the depth buffer
+                GL.Enable(EnableCap.DepthTest);
+                GL.DepthFunc(DepthFunction.Less);
+
+                var texlist = textureid.ToArray().ToSortedList(Comparison);
+
+                int textureload = 0;
+                int lastzoom = texlist.Count == 0 ? 0 : texlist[0].Value.zoom;
+                var beforedraw = DateTime.Now;
+                foreach (var tidict in texlist)
+                {
+                    if (lastzoom != tidict.Value.zoom)
+                    {
+                        lastzoom = tidict.Value.zoom;
+                    }
+
+                    if (tidict.Value.indices.Count > 0)
+                    {
+                        tidict.Value.Draw();
                     }
                 }
 
-                GL.Clear(ClearBufferMask.DepthBufferBit);
-
-                GL.Enable(EnableCap.DepthTest);
-
-                if (tidict.Value.indices.Count > 0)
-                    tidict.Value.Draw();
-
-
-
+                var beforewps = DateTime.Now;
                 GL.Disable(EnableCap.Texture2D);
-                GL.BindTexture(TextureTarget.Texture2D, 0);
 
-            }
-
-            // draw after terrain - need depth check
-            {
-                GL.Enable(EnableCap.DepthTest);
-
-                if (FlightPlanner.instance.pointlist.Count > 1)
+                // draw after terrain - need depth check
                 {
-                    GL.Color3(Color.Red);
+                    GL.Enable(EnableCap.DepthTest);
 
-                    GL.LineWidth(3);
+                    if (FlightPlanner.instance.pointlist.Count > 1)
+                    {
+                        GL.Color3(Color.Red);
 
-                    // render wps
-                    GL.Begin(PrimitiveType.LineStrip);
+                        GL.LineWidth(3);
 
-                    foreach (var point in FlightPlanner.instance.pointlist)
+                        // render wps
+                        GL.Begin(PrimitiveType.LineStrip);
+
+                        foreach (var point in FlightPlanner.instance.pointlist)
+                        {
+                            if (point == null)
+                                continue;
+                            var co = convertCoords(point);
+                            GL.Vertex3(co[0], co[1], co[2]);
+                        }
+
+                        GL.End();
+                    }
+
+                    if (green == 0)
+                    {
+                        green = generateTexture(GMap.NET.Drawing.Properties.Resources.green.ToBitmap());
+                    }
+
+                    GL.Enable(EnableCap.DepthTest);
+                    GL.DepthMask(false);
+                    GL.Enable(EnableCap.Blend);
+                    GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+                    GL.Enable(EnableCap.Texture2D);
+                    GL.BindTexture(TextureTarget.Texture2D, green);
+                    var list = FlightPlanner.instance.pointlist.ToList();
+                    if (MainV2.comPort.MAV.cs.mode.ToLower() == "guided")
+                        list.Add(new PointLatLngAlt(MainV2.comPort.MAV.GuidedMode)
+                            {Alt = MainV2.comPort.MAV.GuidedMode.z + MainV2.comPort.MAV.cs.HomeAlt});
+                    if (MainV2.comPort.MAV.cs.TargetLocation != PointLatLngAlt.Zero)
+                        list.Add(MainV2.comPort.MAV.cs.TargetLocation);
+                    foreach (var point in list)
                     {
                         if (point == null)
                             continue;
+                        if (point.Lat == 0 && point.Lng == 0)
+                            continue;
                         var co = convertCoords(point);
-                        GL.Vertex3(co[0], co[1], co[2]);
+                        GL.Begin(PrimitiveType.TriangleStrip);
+
+                        GL.Color3(Color.Red); //tr
+                        GL.TexCoord2(0, 0);
+                        GL.Vertex3(Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2 + co[0],
+                            Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2 + co[1], co[2] + 10);
+                        GL.Color3(Color.Green); //tl
+                        GL.TexCoord2(1, 0);
+                        GL.Vertex3(co[0] - Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
+                            co[1] - Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] + 10);
+                        GL.Color3(Color.Blue); // br
+                        GL.TexCoord2(0, 1);
+                        GL.Vertex3(co[0] + Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
+                            co[1] + Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] - 1);
+                        GL.Color3(Color.Yellow); // bl
+                        GL.TexCoord2(1, 1);
+                        GL.Vertex3(co[0] - Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
+                            co[1] - Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] - 1);
+
+                        GL.End();
                     }
 
-                    GL.End();
+                    GL.Disable(EnableCap.Blend);
+                    GL.DepthMask(true);
+
+
+                    /*
+                    WPs.ForEach(a =>
+                    {
+                        var co = convertCoords(new PointLatLngAlt(a.lat, a.lng, a.alt));
+                        GL.Vertex3(co[0], co[1], co[2]);
+                    });*/
+
+                }
+                var beforeswapbuffer = DateTime.Now;
+                try
+                {
+                    this.SwapBuffers();
+                }
+                catch
+                {
                 }
 
-                if (green == 0)
+                try
                 {
-                    green = generateTexture(GMap.NET.Drawing.Properties.Resources.green.ToBitmap());
+                    if (Context.IsCurrent)
+                        Context.MakeCurrent(null);
+                }
+                catch
+                {
                 }
 
-                GL.Enable(EnableCap.DepthTest);
-                GL.DepthMask(false);
-                GL.Enable(EnableCap.Blend);
-                GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
-                GL.Enable(EnableCap.Texture2D);
-                GL.BindTexture(TextureTarget.Texture2D, green);
-                var list = FlightPlanner.instance.pointlist.ToList();
-                if (MainV2.comPort.MAV.cs.mode.ToLower() == "guided")
-                    list.Add((PointLatLngAlt) (Locationwp) MainV2.comPort.MAV.GuidedMode);
-                if (MainV2.comPort.MAV.cs.TargetLocation != PointLatLngAlt.Zero)
-                    list.Add(MainV2.comPort.MAV.cs.TargetLocation);
-                foreach (var point in list)
-                {
-                    if (point == null)
-                        continue;
-                    if (point.Lat == 0 && point.Lng == 0)
-                        continue;
-                    var co = convertCoords(point);
-                    GL.Begin(PrimitiveType.TriangleStrip);
+                //this.Invalidate();
 
-                    GL.Color3(Color.Red); //tr
-                    GL.TexCoord2(0, 0);
-                    GL.Vertex3(Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2 + co[0],
-                        Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2 + co[1], co[2] + 10);
-                    GL.Color3(Color.Green); //tl
-                    GL.TexCoord2(1, 0);
-                    GL.Vertex3(co[0] - Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
-                        co[1] - Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] + 10);
-                    GL.Color3(Color.Blue); // br
-                    GL.TexCoord2(0, 1);
-                    GL.Vertex3(co[0] + Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
-                        co[1] + Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] - 1);
-                    GL.Color3(Color.Yellow); // bl
-                    GL.TexCoord2(1, 1);
-                    GL.Vertex3(co[0] - Math.Sin(MathHelper.Radians(rpy.Z + 90)) * 2,
-                        co[1] - Math.Cos(MathHelper.Radians(rpy.Z + 90)) * 2, co[2] - 1);
-
-                    GL.End();
-                }
-
-                GL.Disable(EnableCap.Blend);
-                GL.DepthMask(true);
-
-
-                /*
-                WPs.ForEach(a =>
-                {
-                    var co = convertCoords(new PointLatLngAlt(a.lat, a.lng, a.alt));
-                    GL.Vertex3(co[0], co[1], co[2]);
-                });*/
-
+                var delta = DateTime.Now - start;
+                //Console.Write("OpenGLTest2 {0}    \r", delta.TotalMilliseconds);
+                if (delta.TotalMilliseconds > 20)
+                    Console.Write("OpenGLTest2 total {0} swap {1} wps {2} draw {3} clear {4} wait {5} bwait {6}    \n",
+                        delta.TotalMilliseconds,
+                        (beforeswapbuffer - start).TotalMilliseconds,
+                        (beforewps - start).TotalMilliseconds,
+                        (beforedraw - start).TotalMilliseconds,
+                        (beforeclear - start).TotalMilliseconds,
+                        (afterwait - start).TotalMilliseconds,
+                        (beforewait - start).TotalMilliseconds);
             }
-
-            try
+            finally
             {
-                this.SwapBuffers();
-
-
-                //Context.MakeCurrent(null);
+                textureSemaphore.Release();
             }
-            catch
-            {
-            }
-
-            //this.Invalidate();
-
-            var delta = DateTime.Now - start;
-            Console.Write("OpenGLTest2 {0}\r", delta.TotalMilliseconds);
         }
 
         private int Comparison(KeyValuePair<GPoint, tileInfo> x, KeyValuePair<GPoint, tileInfo> y)
@@ -624,19 +742,16 @@ namespace MissionPlanner.Controls
                 {
                     var area2 = new RectLatLng(_center.Lat, _center.Lng, 0, 0);
 
-                    // 200m at max zoom
+                    // 50m at max zoom
                     // step at 0 zoom
-                    var distm = MathHelper.map(a, 0, zoom, 3000, 10);
+                    var distm = MathHelper.map(a, 0, zoom, 3000, 50);
 
-                    //Console.WriteLine("tiles z {0} max {1} dist {2}", a, zoom, distm);
-
-                    var offset = _center.newpos(rpy.Z, distm);
+                    var offset = _center.newpos(45, distm);
 
                     area2.Inflate(Math.Abs(_center.Lat - offset.Lat), Math.Abs(_center.Lng - offset.Lng));
 
                     var extratile = 0;
-
-                    if (a == zoom)
+                    if (a == minzoom)
                         extratile = 1;
 
                     var tiles = new tileZoomArea()
@@ -646,6 +761,9 @@ namespace MissionPlanner.Controls
                         area = area2
                     };
 
+                    //Console.WriteLine("tiles z {0} max {1} dist {2} tiles {3} pxper100m {4} - {5}", a, zoom, distm,
+                    //  tiles.points.Count, core.pxRes100m, core.Zoom);
+
                     tileArea.Add(tiles);
                 }
             }
@@ -653,8 +771,7 @@ namespace MissionPlanner.Controls
             var totaltiles = 0;
             foreach (var a in tileArea) totaltiles += a.points.Count;
 
-            Console.WriteLine(DateTime.Now.Millisecond + " Total tiles " + totaltiles);
-
+            Console.Write(DateTime.Now.Millisecond + " Total tiles " + totaltiles + "   \r");
 
             if (DateTime.Now.Second % 3 == 1)
                 CleanupOldTextures(tileArea);
@@ -665,6 +782,9 @@ namespace MissionPlanner.Controls
             var stile = C * Math.Cos(_center.Lat) / Math.Pow(2, zoom);
 
             var pxstep = 2;
+
+            //https://wiki.openstreetmap.org/wiki/Zoom_levels
+            // zoom 20 = 38m
 
             // get tiles & combine into one
             foreach (var tilearea in tileArea)
@@ -707,13 +827,14 @@ namespace MissionPlanner.Controls
 
                         if (t.NotEmpty)
                         {
-                            foreach (GMapImage img in t.Overlays)
+                            foreach (var imgPI in t.Overlays)
                             {
+                                var img = (GMapImage) imgPI;
                                 if (!textureid.ContainsKey(p))
                                 {
                                     try
                                     {
-                                        var ti = new tileInfo()
+                                        var ti = new tileInfo(Context, this.WindowInfo, textureSemaphore)
                                         {
                                             point = p,
                                             zoom = tilearea.zoom,
@@ -741,18 +862,43 @@ namespace MissionPlanner.Controls
                                                     break;
                                                 }
 
-
                                                 AddQuad(ti, latlng1, latlng2, latlng3, latlng4, xstart, x, xnext, xend,
                                                     ystart, y, ynext, yend);
                                             }
                                         }
 
                                         if (ti != null)
+                                        {
+                                            //textureSemaphore.Wait();
+                                            try
+                                            {
+                                                // do this on UI thread
+                                                //if (!Context.IsCurrent)
+                                                //Context.MakeCurrent(this.WindowInfo);
+                                                // load it all
+                                                var temp = ti.idtexture;
+                                                var temp2 = ti.idEBO;
+                                                var temp3 = ti.idVBO;
+                                                var temp4 = ti.idVAO;
+                                                // release it
+                                                //if (Context.IsCurrent)
+                                                //Context.MakeCurrent(null);
+                                            }
+                                            catch
+                                            {
+                                                return;
+                                            }
+                                            finally
+                                            {
+                                                //textureSemaphore.Release();
+                                            }
+
                                             textureid[p] = ti;
+                                        }
                                     }
                                     catch
                                     {
-                                        continue;
+                                        return;
                                     }
                                 }
                             }
@@ -763,7 +909,6 @@ namespace MissionPlanner.Controls
                         core.Matrix.LeaveReadLock();
                         core.tileDrawingListLock.ReleaseReaderLock();
                     }
-
                 }
             }
         }
@@ -788,6 +933,8 @@ namespace MissionPlanner.Controls
             PointLatLng latlng4, long xstart, long x,
             long xnext, long xend, long ystart, long y, long ynext, long yend)
         {
+            var zindexmod = (20 - ti.zoom) * 0.30;
+
             var utm1 = convertCoords(latlng1);
             utm1[2] = srtm.getAltitude(latlng1.Lat, latlng1.Lng).alt;
 
@@ -829,19 +976,19 @@ namespace MissionPlanner.Controls
 
             var imgx = MathHelper.map(xnext, xstart, xend, 0, 1);
             var imgy = MathHelper.map(ynext, ystart, yend, 0, 1);
-            ti.vertex.Add(new tileInfo.Vertex(utm4[0], utm4[1], utm4[2], 1, 0, 0, imgx, imgy));
+            ti.vertex.Add(new tileInfo.Vertex(utm4[0], utm4[1], utm4[2] - zindexmod, 1, 0, 0, imgx, imgy));
 
             imgx = MathHelper.map(xnext, xstart, xend, 0, 1);
             imgy = MathHelper.map(y, ystart, yend, 0, 1);
-            ti.vertex.Add(new tileInfo.Vertex(utm3[0], utm3[1], utm3[2], 0, 1, 0, imgx, imgy));
+            ti.vertex.Add(new tileInfo.Vertex(utm3[0], utm3[1], utm3[2] - zindexmod, 0, 1, 0, imgx, imgy));
 
             imgx = MathHelper.map(x, xstart, xend, 0, 1);
             imgy = MathHelper.map(y, ystart, yend, 0, 1);
-            ti.vertex.Add(new tileInfo.Vertex(utm1[0], utm1[1], utm1[2], 0, 0, 1, imgx, imgy));
+            ti.vertex.Add(new tileInfo.Vertex(utm1[0], utm1[1], utm1[2] - zindexmod, 0, 0, 1, imgx, imgy));
 
             imgx = MathHelper.map(x, xstart, xend, 0, 1);
             imgy = MathHelper.map(ynext, ystart, yend, 0, 1);
-            ti.vertex.Add(new tileInfo.Vertex(utm2[0], utm2[1], utm2[2], 1, 1, 0, imgx, imgy));
+            ti.vertex.Add(new tileInfo.Vertex(utm2[0], utm2[1], utm2[2] - zindexmod, 1, 1, 0, imgx, imgy));
 
             var startindex = (uint) ti.vertex.Count - 4;
 
@@ -858,7 +1005,7 @@ namespace MissionPlanner.Controls
             {
                 this.BeginInvoke((MethodInvoker) delegate
                 {
-                    Console.WriteLine(DateTime.Now.Millisecond + " tile cleanup");
+                    Console.WriteLine(DateTime.Now.Millisecond + " tile cleanup    \r");
                     tileInfo temp;
                     textureid.TryRemove(c.Key, out temp);
                     temp?.Cleanup();
@@ -868,8 +1015,12 @@ namespace MissionPlanner.Controls
 
         private void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             this.num_minzoom = new System.Windows.Forms.NumericUpDown();
             this.num_maxzoom = new System.Windows.Forms.NumericUpDown();
+            this.chk_locktomav = new System.Windows.Forms.CheckBox();
+            this.timer1 = new System.Windows.Forms.Timer(this.components);
+            this.chk_fog = new System.Windows.Forms.CheckBox();
             ((System.ComponentModel.ISupportInitialize)(this.num_minzoom)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.num_maxzoom)).BeginInit();
             this.SuspendLayout();
@@ -891,7 +1042,7 @@ namespace MissionPlanner.Controls
             this.num_minzoom.Size = new System.Drawing.Size(54, 20);
             this.num_minzoom.TabIndex = 0;
             this.num_minzoom.Value = new decimal(new int[] {
-            11,
+            12,
             0,
             0,
             0});
@@ -920,9 +1071,41 @@ namespace MissionPlanner.Controls
             0});
             this.num_maxzoom.ValueChanged += new System.EventHandler(this.num_maxzoom_ValueChanged);
             // 
+            // chk_locktomav
+            // 
+            this.chk_locktomav.AutoSize = true;
+            this.chk_locktomav.Checked = true;
+            this.chk_locktomav.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.chk_locktomav.Location = new System.Drawing.Point(63, 6);
+            this.chk_locktomav.Name = "chk_locktomav";
+            this.chk_locktomav.Size = new System.Drawing.Size(88, 17);
+            this.chk_locktomav.TabIndex = 2;
+            this.chk_locktomav.Text = "Lock to MAV";
+            this.chk_locktomav.UseVisualStyleBackColor = true;
+            // 
+            // timer1
+            // 
+            this.timer1.Interval = 40;
+            this.timer1.Tick += new System.EventHandler(this.timer1_Tick);
+            // 
+            // chk_fog
+            // 
+            this.chk_fog.AutoSize = true;
+            this.chk_fog.Checked = true;
+            this.chk_fog.CheckState = System.Windows.Forms.CheckState.Checked;
+            this.chk_fog.Location = new System.Drawing.Point(63, 32);
+            this.chk_fog.Name = "chk_fog";
+            this.chk_fog.Size = new System.Drawing.Size(44, 17);
+            this.chk_fog.TabIndex = 3;
+            this.chk_fog.Text = "Fog";
+            this.chk_fog.UseVisualStyleBackColor = true;
+            this.chk_fog.CheckedChanged += new System.EventHandler(this.chk_fog_CheckedChanged);
+            // 
             // OpenGLtest2
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
+            this.Controls.Add(this.chk_fog);
+            this.Controls.Add(this.chk_locktomav);
             this.Controls.Add(this.num_maxzoom);
             this.Controls.Add(this.num_minzoom);
             this.Name = "OpenGLtest2";
@@ -932,12 +1115,14 @@ namespace MissionPlanner.Controls
             ((System.ComponentModel.ISupportInitialize)(this.num_minzoom)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.num_maxzoom)).EndInit();
             this.ResumeLayout(false);
+            this.PerformLayout();
 
         }
 
         private void test_Load(object sender, EventArgs e)
         {
-            MakeCurrent();
+            if (!Context.IsCurrent)
+                Context.MakeCurrent(this.WindowInfo);
 
             GL.Enable(EnableCap.DepthTest);
 
@@ -946,9 +1131,9 @@ namespace MissionPlanner.Controls
             GL.Enable(EnableCap.ColorMaterial);
             GL.Enable(EnableCap.Normalize);
 
-//GL.Enable(EnableCap.LineSmooth);
-//GL.Enable(EnableCap.PointSmooth);
-//GL.Enable(EnableCap.PolygonSmooth);
+            //GL.Enable(EnableCap.LineSmooth);
+            //GL.Enable(EnableCap.PointSmooth);
+            //GL.Enable(EnableCap.PolygonSmooth);
             GL.ShadeModel(ShadingModel.Smooth);
             GL.Enable(EnableCap.CullFace);
             GL.Enable(EnableCap.Texture2D);
@@ -958,29 +1143,63 @@ namespace MissionPlanner.Controls
 
         private void num_minzoom_ValueChanged(object sender, EventArgs e)
         {
-            minzoom = (int)num_minzoom.Value;
+            minzoom = (int) num_minzoom.Value;
+        }
+
+        private void timer1_Tick(object sender, EventArgs e)
+        {
+            if (onpaintrun == true && IsHandleCreated && !IsDisposed && !Disposing)
+            {
+                this.Invalidate();
+                onpaintrun = false;
+            }
+        }
+
+        private void chk_fog_CheckedChanged(object sender, EventArgs e)
+        {
+            fogon = chk_fog.Checked;
         }
 
         private void num_maxzoom_ValueChanged(object sender, EventArgs e)
         {
-            zoom = (int)num_maxzoom.Value;
+            zoom = (int) num_maxzoom.Value;
         }
 
         private void test_Resize(object sender, EventArgs e)
         {
-            MakeCurrent();
+            textureSemaphore.Wait();
+            try
+            {
+                if (!Context.IsCurrent)
+                    Context.MakeCurrent(this.WindowInfo);
 
-            GL.Viewport(0, 0, this.Width, this.Height);
+                GL.Viewport(0, 0, this.Width, this.Height);
 
-            GL.MatrixMode(MatrixMode.Projection);
+                GL.MatrixMode(MatrixMode.Projection);
 
-            OpenTK.Matrix4 projection = OpenTK.Matrix4.CreatePerspectiveFieldOfView((float) (90 * MathHelper.deg2rad),
-                (float) Width / Height, 0.1f,
-                (float) 20000);
+                OpenTK.Matrix4 projection = OpenTK.Matrix4.CreatePerspectiveFieldOfView(
+                    (float) (90 * MathHelper.deg2rad),
+                    (float) Width / Height, 0.1f,
+                    (float) 20000);
 
-            GL.LoadMatrix(ref projection);
+                GL.LoadMatrix(ref projection);
 
-            core.OnMapSizeChanged(this.Width, this.Height);
+                {
+                    // for unproject - updated on every draw
+                    GL.GetFloat(GetPName.ModelviewMatrix, out modelMatrix);
+                    GL.GetFloat(GetPName.ProjectionMatrix, out projMatrix);
+                    GL.GetInteger(GetPName.Viewport, viewport);
+                }
+
+                if (Context.IsCurrent)
+                    Context.MakeCurrent(null);
+            }
+            finally
+            {
+                textureSemaphore.Release();
+            }
+
+            sizeChanged = true;
 
             this.Invalidate();
         }
@@ -1046,6 +1265,16 @@ namespace MissionPlanner.Controls
             private static int GLHandle;
             private Dictionary<string, int> _uniformLocations;
             private bool init;
+            private IGraphicsContext Context;
+            private IWindowInfo WindowInfo;
+            private readonly SemaphoreSlim contextLock;
+
+            public tileInfo(IGraphicsContext context, IWindowInfo windowInfo, SemaphoreSlim contextLock)
+            {
+                this.Context = context;
+                this.WindowInfo = windowInfo;
+                this.contextLock = contextLock;
+            }
 
             public int idVBO
             {
@@ -1167,8 +1396,8 @@ namespace MissionPlanner.Controls
 
                     //GL.UseProgram(GLHandle);
 
-                    if (idtexture == 0)
-                        return;
+                    //if (idtexture == 0)
+                    //return;
 
                     if (idVAO == 0)
                         return;
@@ -1177,8 +1406,20 @@ namespace MissionPlanner.Controls
                 }
 
                 {
-                    GL.Enable(EnableCap.Texture2D);
-                    GL.BindTexture(TextureTarget.Texture2D, idtexture);
+                    if (textureReady)
+                    {
+                        GL.Enable(EnableCap.Texture2D);
+                        GL.BindTexture(TextureTarget.Texture2D, idtexture);
+
+                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS,
+                            (int) TextureWrapMode.ClampToEdge);
+                        GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT,
+                            (int) TextureWrapMode.ClampToEdge);
+                    }
+                    else
+                    {
+                        GL.Disable(EnableCap.Texture2D);
+                    }
 
                     GL.BindBuffer(BufferTarget.ArrayBuffer, idVBO);
                     GL.VertexPointer(3, VertexPointerType.Float, 5 * 4, IntPtr.Zero);
@@ -1188,9 +1429,8 @@ namespace MissionPlanner.Controls
                     GL.EnableClientState(ArrayCap.TextureCoordArray);
 
                     GL.BindBuffer(BufferTarget.ElementArrayBuffer, idEBO);
-                    GL.DrawElements(PrimitiveType.TriangleStrip, indices.Count, DrawElementsType.UnsignedInt,
+                    GL.DrawElements(PrimitiveType.Triangles, indices.Count, DrawElementsType.UnsignedInt,
                         IntPtr.Zero);
-
                 }
 
                 // Restore the state
@@ -1297,19 +1537,33 @@ void main()
 
             public void Cleanup()
             {
-                GL.DeleteTextures(1, ref _textid);
-
-                GL.DeleteBuffers(1, ref ID_VBO);
-                GL.DeleteBuffers(1, ref ID_EBO);
-                GL.DeleteVertexArray(idVAO);
-                GL.DeleteProgram(GLHandle);
-
+                contextLock.Wait();
                 try
                 {
-                    img.Dispose();
+                    if (!Context.IsCurrent)
+                        Context.MakeCurrent(WindowInfo);
+
+                    GL.DeleteTextures(1, ref _textid);
+
+                    GL.DeleteBuffers(1, ref ID_VBO);
+                    GL.DeleteBuffers(1, ref ID_EBO);
+                    GL.DeleteVertexArray(idVAO);
+                    GL.DeleteProgram(GLHandle);
+
+                    try
+                    {
+                        img.Dispose();
+                    }
+                    catch
+                    {
+                    }
+
+                    if (Context.IsCurrent)
+                        Context.MakeCurrent(null);
                 }
-                catch
+                finally
                 {
+                    contextLock.Release();
                 }
             }
 

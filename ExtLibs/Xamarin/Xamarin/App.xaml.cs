@@ -8,14 +8,17 @@ using System.Net.Sockets;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Acr.UserDialogs;
 using log4net.Appender;
 using log4net.Core;
 using log4net.Layout;
 using log4net.Repository.Hierarchy;
+using NLog;
 using Xamarin.Forms;
 using Xamarin.Forms.Internals;
 using Xamarin.Forms.Xaml;
 using Device = Xamarin.Forms.Device;
+using LogManager = log4net.LogManager;
 
 
 [assembly: XamlCompilation(XamlCompilationOptions.Compile)]
@@ -32,11 +35,13 @@ namespace Xamarin
         {
             InitializeComponent();
 
+            AppDomain.CurrentDomain.UnhandledException += CurrentDomain_UnhandledException;
+
             log4net.Repository.Hierarchy.Hierarchy hierarchy =
                 (Hierarchy)log4net.LogManager.GetRepository(Assembly.GetAssembly(typeof(App)));
 
             PatternLayout patternLayout = new PatternLayout();
-            patternLayout.ConversionPattern = "%date [%thread] %-5level %logger - %message%newline";
+            patternLayout.ConversionPattern = "[%thread] %-5level %logger - %message";
             patternLayout.ActivateOptions();
 
             var cca = new ConsoleAppender();
@@ -47,7 +52,25 @@ namespace Xamarin
             hierarchy.Root.Level = Level.Debug;
             hierarchy.Configured = true;
 
+            {
+                var config = new NLog.Config.LoggingConfiguration();
+
+                // Targets where to log to: File and Console
+                var logconsole = new NLog.Targets.ConsoleTarget("logconsole");
+
+                // Rules for mapping loggers to targets            
+               // config.AddRule(LogLevel.Warn, LogLevel.Fatal, logconsole);
+
+                // Apply config           
+                NLog.LogManager.Configuration = config;
+            }
+
             MainPage = new MainPage();
+        }
+
+        private void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
+        {
+            Log.Warning("Xamarin", e.ExceptionObject.ToString());
         }
 
         protected override void OnStart()
@@ -175,13 +198,8 @@ namespace Xamarin
                 mav.Open(false, true);
 
                 mav.getParamList();
+                //mav.getParamListAsync(mav.MAV.sysid, mav.MAV.compid).ConfigureAwait(false);
 
-                Forms.Device.BeginInvokeOnMainThread(() =>
-                {
-                   
-                });
-
-                
             }
             catch (Exception ex)
             {

@@ -26,6 +26,9 @@ namespace MissionPlanner.ArduPilot
 
                 bool use_int = (port.MAVlist[sysid, compid].cs.capabilities & (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_INT) > 0;
 
+                if (!use_supportfence && type == MAVLink.MAV_MISSION_TYPE.FENCE)
+                    throw new Exception("Fence mission items not supported, please use legacy geofence");
+
                 if (!use_supportfence && !port.MAVlist[sysid, compid].mavlinkv2 && type != MAVLink.MAV_MISSION_TYPE.MISSION)
                 {
                     throw new Exception("Mission type only supported under mavlink2");
@@ -33,7 +36,7 @@ namespace MissionPlanner.ArduPilot
 
                 progress?.Invoke(0, "Getting WP count");
 
-                log.Info("Getting WP #");
+                log.Info("Getting WP # " + type);
 
                 int cmdcount = await port.getWPCountAsync(sysid, compid, type).ConfigureAwait(false);
 
@@ -48,7 +51,7 @@ namespace MissionPlanner.ArduPilot
 
                 progress?.Invoke(100, "Done");
 
-                log.Info("Done");
+                log.Info("Done " + type);
             }
             catch (Exception ex)
             {
@@ -71,6 +74,9 @@ namespace MissionPlanner.ArduPilot
                 bool use_supportfence = (port.MAVlist[sysid, compid].cs.capabilities & (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_FENCE) > 0;
 
                 bool use_int = (port.MAVlist[sysid, compid].cs.capabilities & (uint)MAVLink.MAV_PROTOCOL_CAPABILITY.MISSION_INT) > 0;
+
+                if (!use_supportfence && type == MAVLink.MAV_MISSION_TYPE.FENCE)
+                    throw new Exception("Fence mission items not supported, please use legacy geofence");
 
                 if (!use_supportfence && !port.MAVlist[sysid, compid].mavlinkv2 && type != MAVLink.MAV_MISSION_TYPE.MISSION)
                 {

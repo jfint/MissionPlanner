@@ -23,3 +23,6 @@ packages/
 /Drivers/DriverCleanup.pdb
 /Drivers/DriverCleanup.exe.config
 /Drivers/DriverCleanup.exe
+/objcore
+*.diagsession
+/ExtLibs/WindowsStore/BundleArtifacts

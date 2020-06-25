@@ -161,11 +161,11 @@
     // Sync calls are ok once file is in memory
     //memoryStream.Read(buffer, ...)
 
-                    Console.WriteLine("CollectionBuffer init");
-                    CollectionBuffer collectionBuffer = new CollectionBuffer(memoryStream);
+                    Console.WriteLine("DFLogBuffer init");
+                    DFLogBuffer DFLogBuffer = new DFLogBuffer(memoryStream);
 
-                    Console.WriteLine("CollectionBuffer loop line");
-                    foreach (var line in collectionBuffer)
+                    Console.WriteLine("DFLogBuffer loop line");
+                    foreach (var line in DFLogBuffer)
                     {
                         Console.Write(line);
                     }
@@ -285,7 +285,7 @@
         {
             var param = (MAVLink.mavlink_param_value_t) packet.data;
 
-            Console.WriteLine("{0} {1}", ASCIIEncoding.ASCII.GetString(param.param_id), param.param_value);
+            Console.WriteLine("{0} {1}", Encoding.ASCII.GetString(param.param_id), param.param_value);
         }
 
         return true;

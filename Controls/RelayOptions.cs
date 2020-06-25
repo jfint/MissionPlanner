@@ -1,7 +1,7 @@
-﻿using System;
+﻿using MissionPlanner.Utilities;
+using System;
 using System.Drawing;
 using System.Windows.Forms;
-using MissionPlanner.Utilities;
 
 namespace MissionPlanner.Controls
 {
@@ -18,7 +18,7 @@ namespace MissionPlanner.Controls
 
             thisrelay = relay;
 
-            TXT_rcchannel.Text = "Relay "+thisrelay.ToString();
+            TXT_rcchannel.Text = "Relay " + thisrelay.ToString();
 
             loadSettings();
 
@@ -54,7 +54,7 @@ namespace MissionPlanner.Controls
         {
             try
             {
-                if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
+                if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
                     0, 0, 0))
                 {
                     TXT_rcchannel.BackColor = Color.Red;
@@ -74,7 +74,7 @@ namespace MissionPlanner.Controls
         {
             try
             {
-                if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 1, 0, 0,
+                if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 1, 0, 0,
                     0, 0, 0))
                 {
                     TXT_rcchannel.BackColor = Color.Green;
@@ -94,7 +94,7 @@ namespace MissionPlanner.Controls
         {
             try
             {
-                if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
+                if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
                     0, 0, 0))
                 {
                     TXT_rcchannel.BackColor = Color.Red;
@@ -103,7 +103,7 @@ namespace MissionPlanner.Controls
                 Application.DoEvents();
                 System.Threading.Thread.Sleep(200);
 
-                if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 1, 0, 0,
+                if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 1, 0, 0,
                     0, 0, 0))
                 {
                     TXT_rcchannel.BackColor = Color.Green;
@@ -112,7 +112,7 @@ namespace MissionPlanner.Controls
                 Application.DoEvents();
                 System.Threading.Thread.Sleep(200);
 
-                if (MainV2.comPort.doCommand(MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
+                if (MainV2.comPort.doCommand((byte)MainV2.comPort.sysidcurrent, (byte)MainV2.comPort.compidcurrent, MAVLink.MAV_CMD.DO_SET_RELAY, thisrelay, 0, 0, 0,
                     0, 0, 0))
                 {
                     TXT_rcchannel.BackColor = Color.Red;
@@ -126,7 +126,7 @@ namespace MissionPlanner.Controls
 
         private void renameToolStripMenuItem_Click(object sender, EventArgs e)
         {
-            Control sourcectl = ((ContextMenuStrip) renameToolStripMenuItem.Owner).SourceControl;
+            Control sourcectl = ((ContextMenuStrip)renameToolStripMenuItem.Owner).SourceControl;
 
             string desc = sourcectl.Text;
             MissionPlanner.Controls.InputBox.Show("Description", "Enter new Description", ref desc);

@@ -1,7 +1,7 @@
 ﻿using System;
 using SkiaSharp;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public class Font : IDisposable, ICloneable
     {
@@ -75,7 +75,8 @@ namespace MissionPlanner.Drawing
                 _size = value;
                 try
                 {
-                    nativeFont.TextSize = value;
+                    if(nativeFont != null)
+                        nativeFont.TextSize = value;
                 }
                 catch (Exception e)
                 {
@@ -108,6 +109,11 @@ namespace MissionPlanner.Drawing
         public IntPtr ToHfont()
         {
             return nativeFont.Handle;
+        }
+
+        public float GetHeight()
+        {
+            return nativeFont.FontSpacing;
         }
     }
 }

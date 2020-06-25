@@ -1,23 +1,15 @@
-﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
-using System.Data;
-using System.IO;
-using System.Linq;
-using System.Runtime.InteropServices;
-using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
-using System.Windows.Forms;
-using ExifLibrary;
-using Force.Crc32;
-using ICSharpCode.SharpZipLib.Checksum;
-using Ionic.Zip;
+﻿using Ionic.Zip;
 using log4net;
 using MissionPlanner.ArduPilot.Mavlink;
 using MissionPlanner.Utilities;
-using OpenTK.Audio.OpenAL;
+using System;
+using System.Collections.Generic;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows.Forms;
 
 namespace MissionPlanner.Controls
 {
@@ -25,28 +17,49 @@ namespace MissionPlanner.Controls
     {
         private static readonly ILog log =
             LogManager.GetLogger(System.Reflection.MethodBase.GetCurrentMethod().DeclaringType);
+
         private MAVLinkInterface _mav;
         private MAVFtp _mavftp;
+
+        public MavFTPUI() : this(MainV2.comPort)
+        {
+        }
 
         public MavFTPUI(MAVLinkInterface mav)
         {
             _mav = mav;
-            _mavftp = new MAVFtp(_mav, (byte) _mav.sysidcurrent, (byte) mav.compidcurrent);
-            _mavftp.Progress += (percent) =>
+            _mavftp = new MAVFtp(_mav, (byte)_mav.sysidcurrent, (byte)mav.compidcurrent);
+            _mavftp.Progress += (message, percent) =>
             {
-                if (toolStripProgressBar1.Value == percent)
-                    return;
-
-                if (this.IsDisposed)
+                try
                 {
-                    _mavftp = null;
-                    return;
-                }
+                    if (toolStripProgressBar1.Value == percent)
+                        return;
 
-                this.BeginInvokeIfRequired(() => {
-                    toolStripProgressBar1.Value = percent;
-                    statusStrip1.Refresh();
-                });
+                    if (this.IsDisposed)
+                    {
+                        _mavftp = null;
+                        return;
+                    }
+
+                    this.BeginInvokeIfRequired(() =>
+                    {
+                        try
+                        {
+                            toolStripProgressBar1.Value = percent;
+                            toolStripStatusLabel1.Text = message;
+                            statusStrip1.Refresh();
+                        }
+                        catch (Exception ex)
+                        {
+                            log.Error(ex);
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    log.Error(ex);
+                }
             };
             InitializeComponent();
 
@@ -59,6 +72,8 @@ namespace MissionPlanner.Controls
         {
             toolStripStatusLabel1.Text = "Updating Folders";
 
+            treeView1.BeginUpdate();
+
             treeView1.Enabled = false;
 
             treeView1.Nodes.Clear();
@@ -70,12 +85,24 @@ namespace MissionPlanner.Controls
             {
                 rootNode = new TreeNode(info.Name, 0, 0);
                 rootNode.Tag = info;
-                GetDirectories(await info.GetDirectories().ConfigureAwait(true), rootNode);
+                await GetDirectories(await info.GetDirectories().ConfigureAwait(true), rootNode).ConfigureAwait(true);
                 treeView1.Nodes.Add(rootNode);
             }
+
+            info = new DirectoryInfo(@"@ROMFS/", _mavftp);
+            if (info.Exists)
+            {
+                rootNode = new TreeNode("@ROMFS", 0, 0);
+                rootNode.Tag = info;
+                await GetDirectories(await info.GetDirectories().ConfigureAwait(true), rootNode).ConfigureAwait(true);
+                treeView1.Nodes.Add(rootNode);
+            }
+
             toolStripStatusLabel1.Text = "Ready";
 
             treeView1.Enabled = true;
+            
+            treeView1.EndUpdate();
 
             treeView1.SelectedNode = rootNode;
 
@@ -102,7 +129,7 @@ namespace MissionPlanner.Controls
                 //subSubDirs = await ((DirectoryInfo)treeNode.Tag).GetDirectories();
                 //if (subSubDirs.Length != 0)
                 {
-                  //  await GetDirectories(subSubDirs, treeNode);
+                    //  await GetDirectories(subSubDirs, treeNode);
                 }
 
             }
@@ -115,7 +142,7 @@ namespace MissionPlanner.Controls
 
             TreeNode newSelected = e.Node;
             listView1.Items.Clear();
-            DirectoryInfo nodeDirInfo = (DirectoryInfo) newSelected.Tag;
+            DirectoryInfo nodeDirInfo = (DirectoryInfo)newSelected.Tag;
             ListViewItem.ListViewSubItem[] subItems;
             ListViewItem item = null;
 
@@ -144,7 +171,7 @@ namespace MissionPlanner.Controls
                 subItems = new ListViewItem.ListViewSubItem[]
                 {
                     new ListViewItem.ListViewSubItem(item, "File"),
-                    new ListViewItem.ListViewSubItem(item,file.Size.ToString())
+                    new ListViewItem.ListViewSubItem(item, file.Size.ToString())
                 };
                 item.Tag = nodeDirInfo;
                 item.SubItems.AddRange(subItems);
@@ -154,10 +181,14 @@ namespace MissionPlanner.Controls
             try
             {
                 listView1.AutoResizeColumns(ColumnHeaderAutoResizeStyle.HeaderSize);
-            } catch { }
+            }
+            catch
+            {
+            }
         }
+
         [Serializable]
-        public class DirectoryInfo: FileSystemInfo
+        public class DirectoryInfo : FileSystemInfo
         {
             private readonly MAVFtp _mavftp;
             private List<MAVFtp.FtpFileInfo> cache;
@@ -177,7 +208,7 @@ namespace MissionPlanner.Controls
 
             public override void Delete()
             {
-                _mavftp.kCmdRemoveDirectory(FullPath);
+                _mavftp.kCmdRemoveDirectory(FullPath, new CancellationTokenSource());
             }
 
             public async Task<DirectoryInfo[]> GetDirectories()
@@ -187,7 +218,7 @@ namespace MissionPlanner.Controls
                 {
                     lock (_mavftp)
                     {
-                        cache = _mavftp.kCmdListDirectory(FullPath);
+                        cache = _mavftp.kCmdListDirectory(FullPath, new CancellationTokenSource());
                     }
                 }).ConfigureAwait(true);
                 return cache.Where(a => a.isDirectory && a.Name != "." && a.Name != "..")
@@ -230,10 +261,11 @@ namespace MissionPlanner.Controls
                 var v2 = o1.SubItems[e.Column].Text;
                 if (v1.All(a => a >= '0' && a <= '9') && v2.All(a => a >= '0' && a <= '9'))
                 {
-                    if(listView1.Sorting == SortOrder.Descending)
+                    if (listView1.Sorting == SortOrder.Descending)
                         return double.Parse("0" + v1).CompareTo(double.Parse("0" + v2)) * -1;
                     return double.Parse("0" + v1).CompareTo(double.Parse("0" + v2));
                 }
+
                 if (listView1.Sorting == SortOrder.Descending)
                     return v1.CompareTo(v2) * -1;
                 return v1.CompareTo(v2);
@@ -262,7 +294,10 @@ namespace MissionPlanner.Controls
                         _mavftp.kCmdResetSessions();
                     };
                     prd.doWorkArgs.ForceExit = false;
-                    Action<int> progress = delegate(int i) { prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text); };
+                    Action<string, int> progress = delegate (string message, int i)
+                    {
+                        prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text);
+                    };
                     _mavftp.Progress += progress;
 
                     prd.DoWork += (iprd) =>
@@ -275,7 +310,7 @@ namespace MissionPlanner.Controls
                             return;
                         }
 
-                        File.WriteAllBytes(sfd.FileName, ms.ToArray());
+                        File.WriteAllBytes(sfd.FileName, ms.GetBuffer());
 
                         prd.UpdateProgressAndStatus(-1, "Calc CRC");
                         uint crc = 0;
@@ -294,6 +329,7 @@ namespace MissionPlanner.Controls
                     return;
                 }
             }
+
             toolStripStatusLabel1.Text = "Ready";
         }
 
@@ -328,7 +364,10 @@ namespace MissionPlanner.Controls
             };
             prd.doWorkArgs.ForceExit = false;
 
-            Action<int> progress = delegate (int i) { prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text); };
+            Action<string, int> progress = delegate (string message, int i)
+            {
+                prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text);
+            };
             _mavftp.Progress += progress;
 
             prd.DoWork += (iprd) =>
@@ -360,7 +399,10 @@ namespace MissionPlanner.Controls
             foreach (ListViewItem listView1SelectedItem in listView1.SelectedItems)
             {
                 toolStripStatusLabel1.Text = "Delete " + listView1SelectedItem.Text;
-                var success = _mavftp.kCmdRemoveFile(((DirectoryInfo)listView1SelectedItem.Tag).FullName + "/" + listView1SelectedItem.Text);
+                var success = _mavftp.kCmdRemoveFile(((DirectoryInfo)listView1SelectedItem.Tag).FullName + "/" +
+                                                     listView1SelectedItem.Text, new CancellationTokenSource());
+                if (!success)
+                    CustomMessageBox.Show("Failed to delete file", listView1SelectedItem.Text);
             }
 
             TreeView1_NodeMouseClick(null,
@@ -379,7 +421,7 @@ namespace MissionPlanner.Controls
                 return;
 
             _mavftp.kCmdRename(treeView1.SelectedNode.FullPath + "/" + listView1.SelectedItems[0].Text,
-                treeView1.SelectedNode.FullPath + "/" + e.Label);
+                treeView1.SelectedNode.FullPath + "/" + e.Label, new CancellationTokenSource());
 
             TreeView1_NodeMouseClick(null,
                 new TreeNodeMouseClickEventArgs(treeView1.SelectedNode, MouseButtons.Left, 1, 1, 1));
@@ -391,7 +433,7 @@ namespace MissionPlanner.Controls
             string folder = "";
             var dr = InputBox.Show("Folder Name", "Enter folder name", ref folder);
             if (dr == DialogResult.OK)
-                _mavftp.kCmdCreateDirectory(treeView1.SelectedNode.FullPath + "/" + folder);
+                _mavftp.kCmdCreateDirectory(treeView1.SelectedNode.FullPath + "/" + folder, new CancellationTokenSource());
 
             TreeView1_NodeMouseClick(null,
                 new TreeNodeMouseClickEventArgs(treeView1.SelectedNode, MouseButtons.Left, 1, 1, 1));
@@ -418,12 +460,12 @@ namespace MissionPlanner.Controls
 
             prd.RunBackgroundOperationAsync();
 
-            CustomMessageBox.Show(listView1.SelectedItems[0].Text + ": 0x" +crc.ToString("X"));
+            CustomMessageBox.Show(listView1.SelectedItems[0].Text + ": 0x" + crc.ToString("X"));
         }
 
         private void ListView1_MouseDown(object sender, MouseEventArgs e)
         {
-      
+
         }
 
         private void ListView1_DragEnter(object sender, DragEventArgs e)
@@ -436,7 +478,7 @@ namespace MissionPlanner.Controls
 
         private void ListView1_MouseDoubleClick(object sender, MouseEventArgs e)
         {
-            if (listView1.SelectedItems.Count > 0 )
+            if (listView1.SelectedItems.Count > 0)
             {
                 treeView1.SelectedNode?.Expand();
                 // find child node with name
@@ -445,7 +487,7 @@ namespace MissionPlanner.Controls
                     if (node.Text == listView1.SelectedItems[0].Text)
                     {
                         treeView1.SelectedNode = node;
-                        
+
                         TreeView1_NodeMouseClick(null,
                             new TreeNodeMouseClickEventArgs(treeView1.SelectedNode, MouseButtons.Left, 1, 1, 1));
                         break;
@@ -477,7 +519,10 @@ namespace MissionPlanner.Controls
                     };
                     prd.doWorkArgs.ForceExit = false;
 
-                    Action<int> progress = delegate (int i) { prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text); };
+                    Action<string, int> progress = delegate (string message, int i)
+                    {
+                        prd.UpdateProgressAndStatus(i, toolStripStatusLabel1.Text);
+                    };
                     _mavftp.Progress += progress;
 
                     prd.DoWork += (iprd) =>
@@ -489,7 +534,8 @@ namespace MissionPlanner.Controls
                             iprd.doWorkArgs.CancelRequested = true;
                             return;
                         }
-                        File.WriteAllBytes(sfd.FileName, ms.ToArray());
+
+                        File.WriteAllBytes(sfd.FileName, ms.GetBuffer());
 
                         prd.UpdateProgressAndStatus(-1, "Calc CRC");
                         uint crc = 0;
@@ -508,6 +554,7 @@ namespace MissionPlanner.Controls
                     return;
                 }
             }
+
             toolStripStatusLabel1.Text = "Ready";
         }
 
@@ -516,6 +563,4 @@ namespace MissionPlanner.Controls
             PopulateTreeView();
         }
     }
-
-
 }

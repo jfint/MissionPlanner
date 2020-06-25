@@ -1,12 +1,9 @@
-﻿using System;
+﻿using MissionPlanner.ArduPilot;
+using MissionPlanner.Utilities;
+using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
-using MissionPlanner.ArduPilot;
-using MissionPlanner.Utilities;
 using Xamarin.Forms;
-using Xamarin.Forms.Internals;
 using Xamarin.Forms.Xaml;
 using DeviceInfo = MissionPlanner.ArduPilot.DeviceInfo;
 
@@ -26,7 +23,7 @@ namespace MissionPlanner.test
 
             if (DevInfo.HasValue)
             {
-                platform.SelectedItem = DevInfo.Value.board.Replace("-BL", "");
+                platform.SelectedItem = DevInfo.Value.board?.Replace("-BL", "");
 
                 mavtype.IsVisible = false;
                 lbltype.IsVisible = false;
@@ -69,17 +66,17 @@ namespace MissionPlanner.test
 
             if (board_id.SelectedItem != null && board_id.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.BoardId.ToString() == (string) board_id.SelectedItem);
+                FWList = FWList.Where(a => a.BoardId.ToString() == (string)board_id.SelectedItem);
             }
 
             if (mavtype.SelectedItem != null && mavtype.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.MavType == (string) mavtype.SelectedItem);
+                FWList = FWList.Where(a => a.MavType == (string)mavtype.SelectedItem);
             }
 
             if (versiontype.SelectedItem != null && versiontype.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.MavFirmwareVersionType == (string) versiontype.SelectedItem);
+                FWList = FWList.Where(a => a.MavFirmwareVersionType == (string)versiontype.SelectedItem);
             }
 
             if (format.SelectedItem != null && format.SelectedItem != "Ignore")
@@ -89,22 +86,22 @@ namespace MissionPlanner.test
 
             if (platform.SelectedItem != null && platform.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.Platform == (string) platform.SelectedItem);
+                FWList = FWList.Where(a => a.Platform == (string)platform.SelectedItem);
             }
 
             if (version.SelectedItem != null && version.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.MavFirmwareVersion.ToString() == (string) version.SelectedItem);
+                FWList = FWList.Where(a => a.MavFirmwareVersion.ToString() == (string)version.SelectedItem);
             }
 
             if (USBID.SelectedItem != null && USBID.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.Usbid.Any(b => b.Contains((string) USBID.SelectedItem)));
+                FWList = FWList.Where(a => a.Usbid.Any(b => b.Contains((string)USBID.SelectedItem)));
             }
 
             if (bootloader_str.SelectedItem != null && bootloader_str.SelectedItem != "Ignore")
             {
-                FWList = FWList.Where(a => a.BootloaderStr.Any(b => b.Contains((string) bootloader_str.SelectedItem)));
+                FWList = FWList.Where(a => a.BootloaderStr.Any(b => b.Contains((string)bootloader_str.SelectedItem)));
             }
 
             Result.Items.Clear();
@@ -158,20 +155,34 @@ namespace MissionPlanner.test
 
         private void PopulatePicker(Label label, Picker picker, IEnumerable<string> list)
         {
-            Console.WriteLine("PopulatePicker " + picker.Title);
+            Console.WriteLine("PopulatePicker " + picker.Title + " " + picker.SelectedItem);
             try
             {
+                if (!picker.IsVisible)
+                {
+                    picker.SelectedItem = null;
+                    return;
+                }
+
                 if (picker.SelectedItem == null)
                 {
                     var pick = list.ToList();
                     pick.Add("Ignore");
-                    picker.ItemsSource = pick;
+                    try
+                    {
+                        picker.ItemsSource = pick;
+                    }
+                    catch
+                    {
+                        picker.ItemsSource.Clear();
+                        picker.ItemsSource = pick;
+                    }
                 }
 
                 // select it if its the only item (and Ignore)
                 if (list.Count() == 1 && picker.SelectedIndex == -1)
                 {
-                    picker.SelectedIndex = 0;
+                    //picker.SelectedIndex = 0;
                 }
 
                 if (picker.SelectedItem == "Ignore")
@@ -184,7 +195,7 @@ namespace MissionPlanner.test
 
         private void Result_OnSelectedIndexChanged(object sender, EventArgs e)
         {
-           
+
         }
 
         private void Button_OnClicked(object sender, EventArgs e)

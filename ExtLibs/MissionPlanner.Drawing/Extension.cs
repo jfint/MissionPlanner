@@ -1,9 +1,9 @@
 ﻿using System.Collections.Generic;
 using System.Drawing;
-using MissionPlanner.Drawing.Drawing2D;
+using System.Drawing.Drawing2D;
 using SkiaSharp;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public static class Extension
     {
@@ -30,29 +30,23 @@ namespace MissionPlanner.Drawing
 
         public static SKPaint ToSKPaint(this Pen pen)
         {
-            pen.nativePen.Style = SKPaintStyle.Stroke;
-            return pen.nativePen;
-            var paint = new SKPaint
-            {
-                Color = pen.Color.ToSKColor(),
-                StrokeWidth = pen.Width,
-                IsAntialias = true,
-                Style = SKPaintStyle.Stroke,
-                BlendMode = SKBlendMode.SrcOver,
-                FilterQuality = SKFilterQuality.High
-            };
-
+            pen.nativePen.StrokeWidth = pen.Width;
+            pen.nativePen.Color = pen.Color.ToSKColor();
+            pen.nativePen.Style = SKPaintStyle.Stroke; 
             if (pen.DashStyle != DashStyle.Solid)
-                paint.PathEffect = SKPathEffect.CreateDash(pen.DashPattern, 0);
-            return paint;
+                pen.nativePen.PathEffect = SKPathEffect.CreateDash(pen.DashPattern, 0);
+            return pen.nativePen;
         }
 
 
         static Dictionary<string, SKTypeface> fontcache = new Dictionary<string, SKTypeface>();
         public static SKPaint ToSKPaint(this Font font)
         {
-            if (!fontcache.ContainsKey(font.SystemFontName))
-                fontcache.Add(font.SystemFontName, SKTypeface.FromFamilyName(font.SystemFontName));
+            lock (fontcache)
+            {
+                if (!fontcache.ContainsKey(font.SystemFontName))
+                    fontcache[font.SystemFontName] = SKTypeface.FromFamilyName(font.SystemFontName);
+            }
 
             return new SKPaint
             {
@@ -77,9 +71,13 @@ namespace MissionPlanner.Drawing
         {
             if (brush is SolidBrush)
             {
-                if(!brushcache.ContainsKey(((SolidBrush)brush).Color))
-                    brushcache.Add(((SolidBrush) brush).Color, new SKPaint
-                    {Color = ((SolidBrush) brush).Color.ToSKColor(), IsAntialias = true, Style = SKPaintStyle.Fill});
+                lock(brushcache)
+                    if (!brushcache.ContainsKey(((SolidBrush) brush).Color))
+                        brushcache[((SolidBrush) brush).Color] = new SKPaint
+                        {
+                            Color = ((SolidBrush) brush).Color.ToSKColor(), IsAntialias = true,
+                            Style = SKPaintStyle.Fill
+                        };
 
                 return brushcache[((SolidBrush) brush).Color];
             }

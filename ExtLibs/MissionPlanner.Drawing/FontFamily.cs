@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 
-namespace MissionPlanner.Drawing
+namespace System.Drawing
 {
     public class FontFamily
     {
@@ -38,6 +38,11 @@ namespace MissionPlanner.Drawing
         public bool IsStyleAvailable(FontStyle bold)
         {
             return false;
+        }
+
+        public int GetLineSpacing(FontStyle style)
+        {
+            return 0;
         }
     }
 }
